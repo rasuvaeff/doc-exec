@@ -203,6 +203,41 @@ final class DocExecTest
         Assert::true($result->passed());
     }
 
+    public function aScopeGroupParseErrorReportsTheDiagnosticNotAGenericMessage(): void
+    {
+        // `echo` is a language construct, not an expression: wrapping it as
+        // `(echo "x")` for the `=>` marker is a PHP parse error. PHP CLI
+        // writes that text to stdout, not stderr, under this SAPI's default
+        // display_errors — processFailure() must check both streams.
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            echo "x"; // => 5
+            ```
+            MD);
+
+        Assert::false($result->passed());
+        Assert::same(\count($result->blocks), 1);
+        Assert::string((string) $result->blocks[0]->processError)->contains('error');
+    }
+
+    public function aParseErrorFailsEveryBlockInTheSameScopeGroup(): void
+    {
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            1 + 1; // => 2
+            ```
+
+            ```php doc-exec
+            echo "x"; // => 5
+            ```
+            MD);
+
+        Assert::false($result->passed());
+        Assert::same(\count($result->blocks), 2);
+        Assert::false($result->blocks[0]->passed);
+        Assert::false($result->blocks[1]->passed);
+    }
+
     public function useImportStatementsAreNotWrappedInTryCatch(): void
     {
         $result = $this->check(<<<'MD'
