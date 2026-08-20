@@ -120,9 +120,14 @@ final readonly class DocExec
      */
     private function processFailure(array $group, ProcessOutcome $outcome): array
     {
-        $error = trim($outcome->stderr) !== ''
-            ? trim($outcome->stderr)
-            : \sprintf('process exited with code %d without producing a result', $outcome->exitCode);
+        // PHP CLI's parse/fatal error text lands on stdout under this SAPI's
+        // default display_errors, not stderr — checking stderr alone silently
+        // swallows the one diagnostic a user needs to fix a broken example.
+        $error = match (true) {
+            trim($outcome->stderr) !== '' => trim($outcome->stderr),
+            trim($outcome->stdout) !== '' => trim($outcome->stdout),
+            default => \sprintf('process exited with code %d without producing a result', $outcome->exitCode),
+        };
 
         $results = [];
 

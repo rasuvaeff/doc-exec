@@ -87,9 +87,23 @@ make release-check
   Keep it that way if you touch process I/O.
 - A process-level failure (parse error, fatal not caught by `\Throwable`,
   e.g. OOM) leaves `ProcessOutcome::$results` `null`; `DocExec` reports the
-  entire scope group as failed with `BlockResult::$processError` set, since
-  per-statement granularity is lost in that case — this is a real limitation,
-  not a bug, and the property test's self-check catalog does not exercise it.
+  **entire scope group** as failed with `BlockResult::$processError` set on
+  every block in it, since the parse error is a compile-time failure of the
+  whole generated script — per-statement granularity is lost in that case,
+  and so is which of several blocks in the group actually contains the typo.
+  This is a real limitation, not a bug; the property test's self-check
+  catalog does not exercise it.
+- **`processFailure()` reads both stdout and stderr, stderr first.** PHP
+  CLI's parse/fatal-error text lands on stdout under this SAPI's default
+  `display_errors`, not stderr, in the `composer:2` image this package is
+  built with — checking stderr alone silently drops the one diagnostic a user
+  needs to fix a broken example. Covered by
+  `DocExecTest::aScopeGroupParseErrorReportsTheDiagnosticNotAGenericMessage`.
+- **`composer docs` (`php bin/doc-exec README.md README.ru.md
+  examples/sample.md`) is chained into `composer build`.** This package's
+  entire thesis is catching doc-rot, so its own docs go stale silently if
+  nothing runs `bin/doc-exec` on every build — dogfooding it once by hand is
+  not a gate.
 - `examples/` is part of the public contract: keep scripts runnable and update
   `examples/README.md` when example usage changes.
 - **CI workflows are SHA-pinned.** Every `uses:` in `.github/workflows/*.yml`

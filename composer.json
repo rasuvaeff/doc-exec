@@ -72,10 +72,12 @@
             "@require-checker",
             "@cs",
             "@psalm",
-            "@test"
+            "@test",
+            "@docs"
         ],
         "cs": "php-cs-fixer fix --dry-run --diff --config=.php-cs-fixer.php",
         "cs:fix": "php-cs-fixer fix --diff --config=.php-cs-fixer.php",
+        "docs": "php bin/doc-exec README.md README.ru.md examples/sample.md",
         "mutation": "infection --threads=max",
         "psalm": "psalm --no-cache",
         "rector": "rector process --dry-run",
