@@ -1,0 +1,59 @@
+# doc-exec
+
+Install:
+
+```
+composer require --dev rasuvaeff/doc-exec
+```
+
+## Rules
+
+- PHP 8.3+, `declare(strict_types=1)`
+- Immutable by default (`final readonly class`)
+- A fenced code block only runs when its info string is exactly `php doc-exec`
+  (case-insensitive). A bare ` ```php ` block is illustrative-only and never
+  executed unless `MarkdownExtractor(strict: true)`.
+- Markers are trailing `//` comments on the SAME physical line as a top-level
+  statement's terminating `;` or `}`:
+  - *(none)* — the statement must not throw.
+  - `// => <expr>` — the statement's value equals `<expr>` (`var_export()` comparison).
+  - `// throws <FQCN>[ | <substring>]` — the statement throws `<FQCN>` (optionally
+    with `<substring>` in the message).
+  - `// outputs <text>` — the statement's stdout, trimmed, equals `<text>`, trimmed.
+  - `// skip[: <reason>]` — the statement is never executed.
+- Blocks under the same Markdown heading share one variable scope, in document
+  order; a new heading starts a fresh scope.
+- Every document runs in its own child `php` process (never `eval()`, never
+  in-process) with `vendor/autoload.php` required automatically.
+
+## API
+
+```php
+use Rasuvaeff\DocExec\DocExec;
+use Rasuvaeff\DocExec\Report\ConsoleReporter;
+
+$docExec = new DocExec(bootstrap: null); // null = auto-discover vendor/autoload.php upward
+$result = $docExec->check('README.md');
+
+$result->passed();     // bool
+$result->failedIds();  // list<string>, sha256 stable ids of failing blocks
+
+echo (new ConsoleReporter())->render([$result]);
+```
+
+```php
+use Rasuvaeff\DocExec\MarkdownExtractor;
+
+$blocks = (new MarkdownExtractor())->extract($markdownString, 'README.md');
+// list<CodeBlock>: file, ordinal, startLine, code, scopeKey
+```
+
+CLI (installed as `vendor/bin/doc-exec`):
+
+```
+vendor/bin/doc-exec                              # checks ./README.md
+vendor/bin/doc-exec docs/a.md docs/b.md           # explicit files
+vendor/bin/doc-exec --bootstrap=tests/bootstrap.php README.md
+```
+
+Exit code `0` when every block passed, `1` otherwise.

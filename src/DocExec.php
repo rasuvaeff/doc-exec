@@ -1,0 +1,249 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Rasuvaeff\DocExec;
+
+use Rasuvaeff\DocExec\Execution\GeneratedScript;
+use Rasuvaeff\DocExec\Execution\ProcessOutcome;
+use Rasuvaeff\DocExec\Execution\ProcessRunner;
+use Rasuvaeff\DocExec\Execution\ScriptBuilder;
+use Rasuvaeff\DocExec\Execution\ScriptSlot;
+use RuntimeException;
+
+/**
+ * Facade: reads a Markdown document, extracts `php doc-exec` blocks, groups
+ * them into scopes by heading, and executes each scope group in its own
+ * child PHP process.
+ *
+ * @api
+ */
+final readonly class DocExec
+{
+    private MarkdownExtractor $extractor;
+    private ScriptBuilder $scriptBuilder;
+    private ProcessRunner $processRunner;
+    private AutoloadFinder $autoloadFinder;
+
+    public function __construct(
+        private ?string $bootstrap = null,
+        ?MarkdownExtractor $extractor = null,
+        ?ScriptBuilder $scriptBuilder = null,
+        ?ProcessRunner $processRunner = null,
+        ?AutoloadFinder $autoloadFinder = null,
+    ) {
+        $this->extractor = $extractor ?? new MarkdownExtractor();
+        $this->scriptBuilder = $scriptBuilder ?? new ScriptBuilder();
+        $this->processRunner = $processRunner ?? new ProcessRunner();
+        $this->autoloadFinder = $autoloadFinder ?? new AutoloadFinder();
+    }
+
+    public function check(string $path): DocumentResult
+    {
+        $markdown = file_get_contents($path);
+
+        if ($markdown === false) {
+            throw new RuntimeException(\sprintf('Unable to read "%s"', $path));
+        }
+
+        $bootstrap = $this->bootstrap ?? $this->autoloadFinder->find(\dirname($path));
+
+        if ($bootstrap === null) {
+            throw new RuntimeException(
+                \sprintf('Unable to locate vendor/autoload.php above "%s"; pass an explicit bootstrap', $path),
+            );
+        }
+
+        $blocks = $this->extractor->extract($markdown, $path);
+        $blockResults = [];
+
+        foreach ($this->groupByScope($blocks) as $group) {
+            foreach ($this->runGroup($group, $bootstrap) as $blockResult) {
+                $blockResults[] = $blockResult;
+            }
+        }
+
+        return new DocumentResult(file: $path, blocks: $blockResults);
+    }
+
+    /**
+     * @param list<CodeBlock> $blocks
+     * @return list<list<CodeBlock>>
+     */
+    private function groupByScope(array $blocks): array
+    {
+        $groups = [];
+        $currentKey = null;
+        $current = [];
+
+        foreach ($blocks as $block) {
+            if ($currentKey !== null && $block->scopeKey !== $currentKey) {
+                $groups[] = $current;
+                $current = [];
+            }
+
+            $currentKey = $block->scopeKey;
+            $current[] = $block;
+        }
+
+        if ($current !== []) {
+            $groups[] = $current;
+        }
+
+        return $groups;
+    }
+
+    /**
+     * @param list<CodeBlock> $group
+     * @return list<BlockResult>
+     */
+    private function runGroup(array $group, string $bootstrap): array
+    {
+        $script = $this->scriptBuilder->build($group, $bootstrap);
+
+        if ($script->slots === []) {
+            return [];
+        }
+
+        $outcome = $this->processRunner->run($script->source);
+
+        if ($outcome->results === null) {
+            return $this->processFailure($group, $outcome);
+        }
+
+        return $this->collectBlockResults($script, $outcome);
+    }
+
+    /**
+     * @param list<CodeBlock> $group
+     * @return list<BlockResult>
+     */
+    private function processFailure(array $group, ProcessOutcome $outcome): array
+    {
+        $error = trim($outcome->stderr) !== ''
+            ? trim($outcome->stderr)
+            : \sprintf('process exited with code %d without producing a result', $outcome->exitCode);
+
+        $results = [];
+
+        foreach ($group as $block) {
+            $results[] = new BlockResult(
+                block: $block,
+                stableId: StableId::compute($block->file, $block->ordinal, $block->code),
+                statements: [],
+                passed: false,
+                processError: $error,
+            );
+        }
+
+        return $results;
+    }
+
+    /**
+     * @return list<BlockResult>
+     */
+    private function collectBlockResults(GeneratedScript $script, ProcessOutcome $outcome): array
+    {
+        $results = $outcome->results ?? [];
+
+        /** @var array<int, array{block: CodeBlock, statements: list<StatementResult>}> $byBlock */
+        $byBlock = [];
+
+        foreach ($script->slots as $index => $slot) {
+            /** @var array<string, mixed> $raw */
+            $raw = \is_array($results[$index] ?? null)
+                ? $results[$index]
+                : ['status' => 'fail', 'note' => 'no result reported for this statement'];
+
+            $statementResult = $this->toStatementResult($slot, $raw);
+            $ordinal = $slot->block->ordinal;
+
+            $byBlock[$ordinal]['block'] ??= $slot->block;
+            $byBlock[$ordinal]['statements'][] = $statementResult;
+        }
+
+        $blockResults = [];
+
+        foreach ($byBlock as $entry) {
+            $block = $entry['block'];
+            $statements = $entry['statements'];
+            $passed = true;
+
+            foreach ($statements as $statementResult) {
+                if ($statementResult->outcome === StatementOutcome::Fail) {
+                    $passed = false;
+
+                    break;
+                }
+            }
+
+            $blockResults[] = new BlockResult(
+                block: $block,
+                stableId: StableId::compute($block->file, $block->ordinal, $block->code),
+                statements: $statements,
+                passed: $passed,
+            );
+        }
+
+        return $blockResults;
+    }
+
+    /**
+     * @param array<string, mixed> $raw
+     */
+    private function toStatementResult(ScriptSlot $slot, array $raw): StatementResult
+    {
+        $status = 'fail';
+
+        if (isset($raw['status']) && \is_string($raw['status'])) {
+            $status = $raw['status'];
+        }
+
+        $outcome = match ($status) {
+            'pass' => StatementOutcome::Pass,
+            'skip' => StatementOutcome::Skip,
+            default => StatementOutcome::Fail,
+        };
+
+        if ($outcome !== StatementOutcome::Fail) {
+            return new StatementResult(statement: $slot->statement, marker: $slot->marker, outcome: $outcome, message: null);
+        }
+
+        return new StatementResult(
+            statement: $slot->statement,
+            marker: $slot->marker,
+            outcome: $outcome,
+            message: $this->buildFailureMessage($raw),
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $raw
+     */
+    private function buildFailureMessage(array $raw): string
+    {
+        /** @var list<string> $parts */
+        $parts = [];
+
+        if (isset($raw['note']) && \is_string($raw['note'])) {
+            $parts[] = $raw['note'];
+        }
+
+        if (isset($raw['exception']) && \is_string($raw['exception'])) {
+            $parts[] = 'exception: ' . $raw['exception'];
+        }
+
+        if (\array_key_exists('actual', $raw) && \array_key_exists('expected', $raw)) {
+            $parts[] = 'expected ' . $this->stringify($raw['expected']) . ', got ' . $this->stringify($raw['actual']);
+        } elseif (\array_key_exists('expected', $raw) && \array_key_exists('output', $raw)) {
+            $parts[] = 'expected output ' . $this->stringify($raw['expected']) . ', got ' . $this->stringify($raw['output']);
+        }
+
+        return $parts === [] ? 'failed' : implode('; ', $parts);
+    }
+
+    private function stringify(mixed $value): string
+    {
+        return \is_string($value) ? $value : var_export($value, true);
+    }
+}

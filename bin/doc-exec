@@ -1,0 +1,76 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+$autoloadCandidates = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+
+foreach ($autoloadCandidates as $candidate) {
+    if (is_file($candidate)) {
+        require $candidate;
+
+        break;
+    }
+}
+
+use Rasuvaeff\DocExec\DocExec;
+use Rasuvaeff\DocExec\DocumentResult;
+use Rasuvaeff\DocExec\Report\ConsoleReporter;
+
+$arguments = $argv;
+array_shift($arguments);
+
+$bootstrap = null;
+$files = [];
+
+foreach ($arguments as $argument) {
+    if (str_starts_with($argument, '--bootstrap=')) {
+        $bootstrap = substr($argument, \strlen('--bootstrap='));
+
+        continue;
+    }
+
+    $files[] = $argument;
+}
+
+if ($files === []) {
+    $default = getcwd() . '/README.md';
+
+    if (!is_file($default)) {
+        fwrite(\STDERR, 'doc-exec: no README.md found in ' . getcwd() . " and no files given\n");
+        exit(2);
+    }
+
+    $files = [$default];
+}
+
+$docExec = new DocExec(bootstrap: $bootstrap);
+$reporter = new ConsoleReporter();
+
+/** @var list<DocumentResult> $results */
+$results = [];
+$hadError = false;
+
+foreach ($files as $file) {
+    try {
+        $results[] = $docExec->check($file);
+    } catch (\Throwable $exception) {
+        fwrite(\STDERR, 'doc-exec: ' . $exception->getMessage() . "\n");
+        $hadError = true;
+    }
+}
+
+if ($results !== []) {
+    echo $reporter->render($results) . "\n";
+}
+
+$allPassed = array_reduce(
+    $results,
+    static fn (bool $carry, DocumentResult $result): bool => $carry && $result->passed(),
+    true,
+);
+
+exit($hadError || !$allPassed ? 1 : 0);
