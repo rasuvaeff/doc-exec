@@ -4,133 +4,155 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\DocExec\Statement;
 
-use PhpToken;
+use PhpParser\Error;
+use PhpParser\Node\Stmt;
+use PhpParser\Parser;
+use PhpParser\ParserFactory;
+use PhpParser\Token;
+use Throwable;
 
 /**
- * Splits a code block's PHP source into top-level statements, using the
- * tokenizer (not naive line-splitting) so a multi-line `foreach`/`if`/array
- * literal is kept together as one statement. A statement boundary is a `;`
- * or a `}` closing block syntax, both only recognised at bracket depth 0.
+ * Splits a code block's PHP source into top-level statements using a real
+ * PHP parser, so every construct the language has — closures, `if`/`else`,
+ * `try`/`catch`, `match`, anonymous classes, `do`/`while` — is one statement,
+ * exactly as PHP itself sees it.
  *
- * A trailing `//`/`#`/`/* *\/` comment on the SAME physical line as the
- * boundary token is captured as the statement's marker comment; a comment on
- * its own line does not attach to anything.
+ * Each statement keeps its verbatim source text (taken back out of the
+ * original code by file position, never re-printed), the line it *starts*
+ * on, and a trailing `//`/`#`/`/* *\/` comment sitting on the same physical
+ * line as its last token. A comment on its own line attaches to nothing.
  *
- * @api
+ * @internal
  */
 final readonly class StatementSplitter
 {
-    private const array OPENERS = ['{', '(', '['];
-    private const array CLOSERS = ['}', ')', ']'];
+    private const string PREFIX = "<?php\n";
+
+    private Parser $parser;
+
+    public function __construct(?Parser $parser = null)
+    {
+        $this->parser = $parser ?? (new ParserFactory())->createForHostVersion();
+    }
 
     /**
      * @return list<Statement>
+     * @throws StatementParseError when the block is not valid PHP
      */
     public function split(string $code): array
     {
-        $tokens = PhpToken::tokenize('<?php ' . $code);
+        [$nodes, $source, $appendedSemicolon] = $this->parse($code);
+        $tokens = array_values($this->parser->getTokens());
+        $lastOffset = \strlen($source) - 1;
         $statements = [];
 
-        /** @var list<string> $stack */
-        $stack = [];
-        /** @var list<PhpToken> $chunk */
-        $chunk = [];
-
-        $count = \count($tokens);
-        $i = 1; // skip the synthetic T_OPEN_TAG token
-
-        while ($i < $count) {
-            $token = $tokens[$i];
-            $text = $token->text;
-            $opening = null;
-
-            if (\in_array($text, self::OPENERS, true)) {
-                $stack[] = $text;
-            } elseif (\in_array($text, self::CLOSERS, true)) {
-                $opening = array_pop($stack);
-            }
-
-            $chunk[] = $token;
-
-            $isBoundary = $stack === [] && ($text === ';' || ($text === '}' && $opening === '{'));
-
-            if ($isBoundary) {
-                [$comment, $consumed] = $this->readTrailingComment($tokens, $i + 1, $token->line);
-                $statements[] = $this->buildStatement($chunk, $token->line, $comment);
-                $chunk = [];
-                $i += 1 + $consumed;
-
+        foreach ($nodes as $node) {
+            if ($node instanceof Stmt\Nop) {
                 continue;
             }
 
-            ++$i;
-        }
+            $start = $node->getStartFilePos();
+            $end = $node->getEndFilePos();
+            $text = substr($source, $start, $end - $start + 1);
 
-        $tail = trim(implode('', array_map(static fn(PhpToken $t): string => $t->text, $chunk)));
-        $lastToken = end($chunk);
+            if ($appendedSemicolon && $end === $lastOffset) {
+                $text = rtrim($text, ';');
+            }
 
-        if ($tail !== '' && $lastToken instanceof PhpToken && $this->containsCode($chunk)) {
-            $statements[] = new Statement(code: $tail, line: $lastToken->line, trailingComment: null);
+            $statements[] = new Statement(
+                code: $text,
+                line: max(1, $node->getStartLine() - 1),
+                trailingComment: $this->trailingComment($tokens, $node->getEndTokenPos(), $node->getEndLine()),
+                kind: $this->kindOf($node),
+            );
         }
 
         return $statements;
     }
 
     /**
-     * @param list<PhpToken> $tokens
-     * @return array{0: ?string, 1: int} [comment text or null, tokens consumed]
+     * A block may legitimately end in a bare expression with no `;` —
+     * `1 + 1 // => 2` is the shortest doctest there is. PHP itself rejects
+     * that, so one retry with a synthetic terminator is made and the
+     * terminator is stripped back off the statement's text.
+     *
+     * @return array{0: list<Stmt>, 1: string, 2: bool} [nodes, parsed source, semicolon appended]
+     * @throws StatementParseError
      */
-    private function readTrailingComment(array $tokens, int $start, int $boundaryLine): array
+    private function parse(string $code): array
     {
-        $consumed = 0;
+        $source = self::PREFIX . $code;
+
+        try {
+            return [$this->parseSource($source), $source, false];
+        } catch (Error $error) {
+            $retry = $source . ';';
+
+            try {
+                return [$this->parseSource($retry), $retry, true];
+            } catch (Throwable) {
+                throw new StatementParseError(
+                    $error->getRawMessage(),
+                    max(1, $error->getStartLine() - 1),
+                );
+            }
+        }
+    }
+
+    /**
+     * @return list<Stmt>
+     * @throws Error
+     */
+    private function parseSource(string $source): array
+    {
+        try {
+            $nodes = $this->parser->parse($source);
+        } catch (Error $error) {
+            throw $error;
+        } catch (Throwable $failure) {
+            // A parser build older than the running PHP rejects newer syntax
+            // with its own exception type rather than PhpParser\Error; report
+            // it against the block instead of letting a stack trace escape.
+            throw new Error($failure->getMessage(), ['startLine' => 1]);
+        }
+
+        return array_values($nodes ?? []);
+    }
+
+    /**
+     * @param list<Token> $tokens
+     */
+    private function trailingComment(array $tokens, int $endTokenPos, int $endLine): ?string
+    {
         $count = \count($tokens);
 
-        for ($i = $start; $i < $count; ++$i) {
+        for ($i = $endTokenPos + 1; $i < $count; ++$i) {
             $token = $tokens[$i];
 
-            if ($token->line !== $boundaryLine) {
-                break;
+            if ($token->line !== $endLine) {
+                return null;
             }
 
             if ($token->is(\T_WHITESPACE)) {
-                ++$consumed;
-
                 continue;
             }
 
             if ($token->is(\T_COMMENT)) {
-                $comment = trim((string) preg_replace('~^//|^#|^/\*|\*/$~', '', $token->text));
-
-                return [$comment, $consumed + 1];
+                return trim((string) preg_replace('~^//|^#|^/\*|\*/$~', '', $token->text));
             }
 
-            break;
+            return null;
         }
 
-        return [null, $consumed];
+        return null;
     }
 
-    /**
-     * @param list<PhpToken> $chunk
-     */
-    private function containsCode(array $chunk): bool
+    private function kindOf(Stmt $node): StatementKind
     {
-        foreach ($chunk as $token) {
-            if (!$token->is(\T_WHITESPACE) && !$token->is(\T_COMMENT)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * @param list<PhpToken> $chunk
-     */
-    private function buildStatement(array $chunk, int $line, ?string $comment): Statement
-    {
-        $code = trim(implode('', array_map(static fn(PhpToken $t): string => $t->text, $chunk)));
-
-        return new Statement(code: $code, line: $line, trailingComment: $comment);
+        return match (true) {
+            $node instanceof Stmt\Expression => StatementKind::Expression,
+            $node instanceof Stmt\Use_, $node instanceof Stmt\GroupUse => StatementKind::Import,
+            default => StatementKind::Other,
+        };
     }
 }

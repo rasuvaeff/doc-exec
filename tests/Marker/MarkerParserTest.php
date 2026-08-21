@@ -76,6 +76,34 @@ final class MarkerParserTest
     {
         yield 'bare skip' => ['skip', null];
         yield 'skip with colon reason' => ['skip: network call', 'network call'];
-        yield 'skip with space reason' => ['skip network call', 'network call'];
+    }
+
+    #[DataProvider('proseCommentProvider')]
+    public function proseIsNotAMarker(string $comment): void
+    {
+        Assert::same((new MarkerParser())->parse($comment)->type, MarkerType::None);
+    }
+
+    public static function proseCommentProvider(): iterable
+    {
+        yield 'skip-prefixed prose' => ['skip this in production'];
+        yield 'hyphenated word' => ['skip-not'];
+        yield 'plain sentence' => ['this is just a note'];
+    }
+
+    public function emptyEqualsMarkerIsInvalidRatherThanEmptyExpression(): void
+    {
+        $marker = (new MarkerParser())->parse('=>');
+
+        Assert::same($marker->type, MarkerType::Invalid);
+        Assert::string((string) $marker->error)->contains('needs an expression');
+    }
+
+    public function skipWithAnEmptyReasonKeepsTheMarkerAndDropsTheReason(): void
+    {
+        $marker = (new MarkerParser())->parse('skip:');
+
+        Assert::same($marker->type, MarkerType::Skip);
+        Assert::null($marker->skipReason);
     }
 }

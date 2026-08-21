@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Rasuvaeff\DocExec\Marker;
 
 /**
+ * A parsed trailing-comment marker. Construct through the named factories:
+ * every one of them corresponds to exactly one {@see MarkerType} case.
+ *
  * @api
  */
 final readonly class ParsedMarker
@@ -16,6 +19,7 @@ final readonly class ParsedMarker
         public ?string $exceptionSubstring = null,
         public ?string $expectedOutput = null,
         public ?string $skipReason = null,
+        public ?string $error = null,
     ) {}
 
     public static function none(): self
@@ -45,5 +49,10 @@ final readonly class ParsedMarker
     public static function skip(?string $reason): self
     {
         return new self(type: MarkerType::Skip, skipReason: $reason);
+    }
+
+    public static function invalid(string $error): self
+    {
+        return new self(type: MarkerType::Invalid, error: $error);
     }
 }

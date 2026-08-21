@@ -23,7 +23,8 @@
     },
     "require": {
         "php": "8.3 - 8.5",
-        "ext-tokenizer": "*"
+        "ext-tokenizer": "*",
+        "nikic/php-parser": "^5.7"
     },
     "require-dev": {
         "ergebnis/composer-normalize": "^2.51",

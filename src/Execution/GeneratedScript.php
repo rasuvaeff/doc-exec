@@ -11,9 +11,11 @@ final readonly class GeneratedScript
 {
     /**
      * @param list<ScriptSlot> $slots
+     * @param list<BlockFailure> $blockFailures blocks rejected before execution
      */
     public function __construct(
         public string $source,
         public array $slots,
+        public array $blockFailures = [],
     ) {}
 }

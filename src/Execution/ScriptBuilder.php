@@ -9,6 +9,8 @@ use Rasuvaeff\DocExec\Marker\MarkerParser;
 use Rasuvaeff\DocExec\Marker\MarkerType;
 use Rasuvaeff\DocExec\Marker\ParsedMarker;
 use Rasuvaeff\DocExec\Statement\Statement;
+use Rasuvaeff\DocExec\Statement\StatementKind;
+use Rasuvaeff\DocExec\Statement\StatementParseError;
 use Rasuvaeff\DocExec\Statement\StatementSplitter;
 
 /**
@@ -41,21 +43,40 @@ final readonly class ScriptBuilder
     {
         $slots = [];
         $body = [];
+        $blockFailures = [];
 
         foreach ($blocks as $block) {
-            foreach ($this->splitter->split($block->code) as $statement) {
+            try {
+                $statements = $this->splitter->split($block->code);
+            } catch (StatementParseError $error) {
+                // Reported per block: writing unparsable code into the shared
+                // script would turn one broken example into a compile error
+                // that fails every block in the scope group.
+                $blockFailures[] = new BlockFailure(
+                    block: $block,
+                    message: \sprintf(
+                        'parse error on line %d of the block: %s',
+                        $error->blockLine,
+                        $error->getMessage(),
+                    ),
+                );
+
+                continue;
+            }
+
+            foreach ($statements as $statement) {
                 // `use <Ns>\<Class>;` (and `use function …`/`use const …`) is a
                 // compile-time import declaration: PHP only allows it at the
                 // top level of a file, never inside a block. Wrapping it in
                 // try/catch like every other statement would be a syntax
                 // error, so it is emitted verbatim and carries no marker.
-                if (preg_match('/^use\s/i', $statement->code) === 1) {
+                if ($statement->kind === StatementKind::Import) {
                     $body[] = $statement->code . "\n";
 
                     continue;
                 }
 
-                $marker = $this->markerParser->parse($statement->trailingComment);
+                $marker = $this->validateMarker($this->markerParser->parse($statement->trailingComment), $statement);
                 $slot = \count($slots);
                 $slots[] = new ScriptSlot(block: $block, statement: $statement, marker: $marker);
                 $body[] = $this->renderSlot($slot, $statement, $marker);
@@ -70,18 +91,42 @@ final readonly class ScriptBuilder
             . "fwrite(\$__docexec_fp, json_encode(\$__docexec_results, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));\n"
             . "fclose(\$__docexec_fp);\n";
 
-        return new GeneratedScript(source: $source, slots: $slots);
+        return new GeneratedScript(source: $source, slots: $slots, blockFailures: $blockFailures);
+    }
+
+    /**
+     * `// =>` compares the *value* of a statement, so it only means anything
+     * on an expression statement. On `echo`, `if`, `foreach` and friends the
+     * generated `(...)` wrapper would be a syntax error; say so instead.
+     */
+    private function validateMarker(ParsedMarker $marker, Statement $statement): ParsedMarker
+    {
+        if ($marker->type !== MarkerType::Equals || $statement->kind === StatementKind::Expression) {
+            return $marker;
+        }
+
+        return ParsedMarker::invalid(
+            'the `// =>` marker only works on an expression statement, and this statement is not one',
+        );
     }
 
     private function renderSlot(int $slot, Statement $statement, ParsedMarker $marker): string
     {
         return match ($marker->type) {
+            MarkerType::Invalid => $this->renderInvalid($slot, $marker),
             MarkerType::Skip => "\$__docexec_results[{$slot}] = ['status' => 'skip'];\n",
             MarkerType::Equals => $this->renderEquals($slot, $statement, $marker),
             MarkerType::Throws => $this->renderThrows($slot, $statement, $marker),
             MarkerType::Outputs => $this->renderOutputs($slot, $statement, $marker),
             MarkerType::None => $this->renderPlain($slot, $statement),
         };
+    }
+
+    private function renderInvalid(int $slot, ParsedMarker $marker): string
+    {
+        $note = $this->literal((string) $marker->error);
+
+        return "\$__docexec_results[{$slot}] = ['status' => 'fail', 'note' => {$note}];\n";
     }
 
     private function renderPlain(int $slot, Statement $statement): string

@@ -101,17 +101,57 @@ final readonly class DocExec
     {
         $script = $this->scriptBuilder->build($group, $bootstrap);
 
-        if ($script->slots === []) {
-            return [];
+        /** @var array<int, BlockResult> $byOrdinal */
+        $byOrdinal = [];
+
+        foreach ($script->blockFailures as $failure) {
+            $byOrdinal[$failure->block->ordinal] = $this->blockError($failure->block, $failure->message);
         }
 
-        $outcome = $this->processRunner->run($script->source);
+        if ($script->slots !== []) {
+            $executable = [];
 
-        if ($outcome->results === null) {
-            return $this->processFailure($group, $outcome);
+            foreach ($script->slots as $slot) {
+                $executable[$slot->block->ordinal] = $slot->block;
+            }
+
+            $outcome = $this->processRunner->run($script->source);
+
+            $results = $outcome->results === null
+                ? $this->processFailure(array_values($executable), $outcome)
+                : $this->collectBlockResults($script, $outcome);
+
+            foreach ($results as $blockResult) {
+                $byOrdinal[$blockResult->block->ordinal] = $blockResult;
+            }
         }
 
-        return $this->collectBlockResults($script, $outcome);
+        // A block holding nothing runnable (empty, or only comments) still
+        // exists in the document: reporting it keeps the "N/M blocks" total
+        // honest instead of letting the block silently disappear.
+        foreach ($group as $block) {
+            $byOrdinal[$block->ordinal] ??= new BlockResult(
+                block: $block,
+                stableId: StableId::compute($block->file, $block->ordinal, $block->code),
+                statements: [],
+                passed: true,
+            );
+        }
+
+        ksort($byOrdinal);
+
+        return array_values($byOrdinal);
+    }
+
+    private function blockError(CodeBlock $block, string $error): BlockResult
+    {
+        return new BlockResult(
+            block: $block,
+            stableId: StableId::compute($block->file, $block->ordinal, $block->code),
+            statements: [],
+            passed: false,
+            processError: $error,
+        );
     }
 
     /**
@@ -132,13 +172,7 @@ final readonly class DocExec
         $results = [];
 
         foreach ($group as $block) {
-            $results[] = new BlockResult(
-                block: $block,
-                stableId: StableId::compute($block->file, $block->ordinal, $block->code),
-                statements: [],
-                passed: false,
-                processError: $error,
-            );
+            $results[] = $this->blockError($block, $error);
         }
 
         return $results;
