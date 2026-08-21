@@ -6,8 +6,10 @@ namespace Rasuvaeff\DocExec\Tests\Execution;
 
 use Rasuvaeff\DocExec\CodeBlock;
 use Rasuvaeff\DocExec\Execution\ScriptBuilder;
+use Rasuvaeff\DocExec\Marker\MarkerParser;
 use Rasuvaeff\DocExec\Marker\MarkerType;
 use Rasuvaeff\DocExec\Statement\StatementKind;
+use Rasuvaeff\DocExec\Statement\StatementSplitter;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Test;
@@ -158,5 +160,95 @@ final class ScriptBuilderTest
         $block = new CodeBlock(file: 'a.md', ordinal: 0, startLine: 1, code: $code, scopeKey: '');
 
         return (new ScriptBuilder())->build([$block], $bootstrap);
+    }
+
+    public function theGeneratedScriptHasTheExactPreambleAndEpilogue(): void
+    {
+        $script = $this->build('$a = 1;', bootstrap: '/tmp/autoload.php');
+
+        Assert::true(str_starts_with($script->source, "<?php\n\ndeclare(strict_types=1);\n\n"));
+        Assert::string($script->source)->contains("require_once '/tmp/autoload.php';\n\n");
+        Assert::string($script->source)->contains("\$__docexec_results = [];\n\n");
+        Assert::true(str_ends_with(
+            $script->source,
+            "\n\$__docexec_fp = fopen('php://fd/3', 'w');\n"
+            . "fwrite(\$__docexec_fp, json_encode(\$__docexec_results, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));\n"
+            . "fclose(\$__docexec_fp);\n",
+        ));
+    }
+
+    public function theGeneratedScriptRunsAsRealPhp(): void
+    {
+        // The preamble/epilogue assertions above pin the text; this pins that
+        // the text is executable and reports one row per slot.
+        $script = $this->build("\$a = 2;\n\$a * 3; // => 6", bootstrap: \dirname(__DIR__, 2) . '/vendor/autoload.php');
+
+        $outcome = (new \Rasuvaeff\DocExec\Execution\ProcessRunner())->run($script->source);
+
+        Assert::same($outcome->results, [['status' => 'pass', 'output' => ''], [
+            'status' => 'pass',
+            'actual' => '6',
+            'expected' => '6',
+            'output' => '',
+        ]]);
+    }
+
+    public function theThrowsMarkerReportsTheExpectedClassWhenNothingIsThrown(): void
+    {
+        $script = $this->build('1 + 1; // throws RuntimeException');
+
+        Assert::string($script->source)->contains("'expected throw of ' . 'RuntimeException'");
+    }
+
+    public function aLeadingBackslashIsStrippedFromTheExpectedExceptionClass(): void
+    {
+        $script = $this->build('1 + 1; // throws \\RuntimeException');
+
+        Assert::string($script->source)->contains("\$__docexec_class = 'RuntimeException';");
+    }
+
+    public function injectedCollaboratorsAreUsedInsteadOfTheDefaults(): void
+    {
+        $block = new CodeBlock(file: 'a.md', ordinal: 0, startLine: 1, code: '$a = 1; // => 1', scopeKey: '');
+
+        $script = (new ScriptBuilder(new StatementSplitter(), new MarkerParser()))->build([$block], '/tmp/autoload.php');
+
+        Assert::same(\count($script->slots), 1);
+        Assert::same($script->slots[0]->marker->type, MarkerType::Equals);
+    }
+
+    public function consecutiveImportsEachGetTheirOwnLine(): void
+    {
+        $script = $this->build("use RuntimeException;\nuse LogicException;\n\$a = 1;");
+
+        Assert::string($script->source)->contains("use RuntimeException;\n");
+        Assert::string($script->source)->contains("use LogicException;\n");
+        Assert::string($script->source)->notContains('use RuntimeException;use LogicException;');
+    }
+
+    public function aBlockThatOnlyFailsToParseProducesNoSlotsAtAll(): void
+    {
+        $block = new CodeBlock(file: 'a.md', ordinal: 0, startLine: 1, code: '$broken = ;', scopeKey: '');
+
+        $script = (new ScriptBuilder())->build([$block], '/tmp/autoload.php');
+
+        Assert::same($script->slots, []);
+        Assert::same(\count($script->blockFailures), 1);
+    }
+
+    public function theParseErrorMessageNamesTheLineInsideTheBlock(): void
+    {
+        $block = new CodeBlock(file: 'a.md', ordinal: 0, startLine: 40, code: "\$a = 1;\n\$b = 1;\n\$c = ;", scopeKey: '');
+
+        $script = (new ScriptBuilder())->build([$block], '/tmp/autoload.php');
+
+        Assert::string($script->blockFailures[0]->message)->contains('parse error on line 3 of the block');
+    }
+
+    public function theOutputsMarkerQuotesTheExpectedTextSafely(): void
+    {
+        $script = $this->build("echo 'x'; // outputs it's here");
+
+        Assert::string($script->source)->contains("'it\\'s here'");
     }
 }

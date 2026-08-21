@@ -125,6 +125,18 @@ final class ProcessRunnerTest
         (new ProcessRunner(phpBinary: '/nonexistent/php', timeoutSeconds: 5))->run("<?php\n");
     }
 
+    public function theChildGetsAClosedStdinRatherThanBlockingOnIt(): void
+    {
+        // A block calling fgets(STDIN) must see EOF: an inherited or open
+        // stdin would hang the run until the deadline killed it.
+        $outcome = (new ProcessRunner(timeoutSeconds: 5))->run(
+            "<?php\n\$line = fgets(STDIN);\necho var_export(\$line, true);\n",
+        );
+
+        Assert::same($outcome->stdout, 'false');
+        Assert::false($outcome->timedOut);
+    }
+
     public function nonStringFieldsInAResultRowAreDroppedRatherThanTrusted(): void
     {
         // The rows come from a child process running the document's own code:
@@ -135,6 +147,45 @@ final class ProcessRunnerTest
         );
 
         Assert::same($outcome->results, [['status' => 'pass']]);
+    }
+
+    public function everyStreamIsDrainedNotJustTheFirstOneReady(): void
+    {
+        // Dropping any one of the three pipes from the loop loses either the
+        // document's output, its diagnostics, or the results themselves.
+        $source = "<?php\nfwrite(STDOUT, 'o');\nfwrite(STDERR, 'e');\n"
+            . "\$fp = fopen('php://fd/3', 'w');\nfwrite(\$fp, json_encode([['status' => 'pass']]));\nfclose(\$fp);\n";
+
+        $outcome = (new ProcessRunner())->run($source);
+
+        Assert::same($outcome->stdout, 'o');
+        Assert::same($outcome->stderr, 'e');
+        Assert::same($outcome->results, [['status' => 'pass']]);
+    }
+
+    public function outputArrivingInSeveralChunksIsConcatenatedInOrder(): void
+    {
+        $source = "<?php\nforeach (['a', 'b', 'c'] as \$part) {\n    echo \$part;\n    usleep(50000);\n}\n";
+
+        Assert::same((new ProcessRunner(timeoutSeconds: 10))->run($source)->stdout, 'abc');
+    }
+
+    public function aProcessThatOutlivesItsBudgetIsKilledCloseToTheDeadline(): void
+    {
+        $started = hrtime(as_number: true);
+        (new ProcessRunner(timeoutSeconds: 1))->run("<?php\nwhile (true) {}\n");
+        $elapsedSeconds = (hrtime(as_number: true) - $started) / 1_000_000_000;
+
+        Assert::true($elapsedSeconds >= 1.0);
+        Assert::true($elapsedSeconds < 5.0);
+    }
+
+    public function aProcessFinishingWellInsideItsBudgetIsNotFlagged(): void
+    {
+        $outcome = (new ProcessRunner(timeoutSeconds: 30))->run("<?php\nusleep(100000);\necho 'done';\n");
+
+        Assert::false($outcome->timedOut);
+        Assert::same($outcome->stdout, 'done');
     }
 
     private function scriptReporting(string $phpArrayLiteral): string

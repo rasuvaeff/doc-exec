@@ -18,7 +18,9 @@ examples that quietly stop matching the code they document — the way
 ## Requirements
 
 - PHP 8.3+
-- `ext-tokenizer` (splits a code block into statements without naive line-splitting)
+- `ext-tokenizer`
+- `nikic/php-parser` ^5.7 (a code block is split into statements by a real PHP
+  parser, so every construct the language allows stays intact)
 
 ## Installation
 
@@ -47,13 +49,44 @@ network_call(); // skip: hits a real API
 | `// => <expr>` | The statement's value matches `<expr>`, compared via `var_export()`. |
 | `// throws <FQCN>[ \| <substring>]` | The statement throws an instance of `<FQCN>`, optionally with a message containing `<substring>`. |
 | `// outputs <text>` | The statement's stdout, trimmed, equals `<text>`, trimmed. |
-| `// skip[: <reason>]` | The statement is never executed — documentation only. |
+| `// skip` or `// skip: <reason>` | The statement is never executed — documentation only. |
+
+The `skip` grammar is deliberately strict: `// skip this in production` is
+prose and stays executable. A lenient rule would fail open — the statement
+would silently never run while its block still reported PASS.
+
+`// =>` compares with `var_export()`, which compares **state, not identity**:
+two distinct objects with equal properties compare equal, and `0.1 + 0.2` is
+correctly distinguished from `0.3`. The marker only applies to an expression
+statement — on `echo`, `if` or `foreach` it is reported as a mistake rather
+than silently doing nothing.
 
 Blocks under the same Markdown heading share one variable scope, in document
 order (setup → assert, like a doctest); a new heading starts a fresh scope.
 Every document runs in its own child `php` process with the project's
 `vendor/autoload.php` on the include path — never `eval()`, never the process
 running doc-exec itself.
+
+Because blocks are parsed rather than pattern-matched, anything PHP allows is
+one statement — closures, `if`/`else`, `try`/`catch`, `match`, anonymous
+classes, `do`/`while`:
+
+```php doc-exec
+$double = function (int $n): int {
+    return $n * 2;
+};
+
+if ($double(4) > 5) {
+    $size = 'big';
+} else {
+    $size = 'small';
+}
+
+$size; // => 'big'
+```
+
+A block that is not valid PHP is reported against that block, with the line
+number inside the block; the other blocks sharing its scope still run.
 
 ```php doc-exec
 2 + 3; // => 5
@@ -64,13 +97,20 @@ running doc-exec itself.
 ### Command line
 
 ```bash
-vendor/bin/doc-exec              # zero-config: checks ./README.md
-vendor/bin/doc-exec docs/*.md    # explicit file list
-vendor/bin/doc-exec --bootstrap=tests/bootstrap.php README.md
+vendor/bin/doc-exec                                           # zero-config: checks ./README.md
+vendor/bin/doc-exec docs/*.md                                 # explicit file list
+vendor/bin/doc-exec --bootstrap=tests/bootstrap.php README.md # explicit autoloader
+vendor/bin/doc-exec --timeout=60 docs/slow.md                 # wall-clock budget per scope group
+vendor/bin/doc-exec --help
 ```
 
 Exit code is `0` when every block passes, `1` otherwise — wire it into CI or
-a pre-commit hook.
+a pre-commit hook. An unknown option is a usage error (exit `2`), never a file
+name.
+
+Each scope group runs under a wall-clock deadline — 30 seconds by default,
+`--timeout=<seconds>` to change it. A block that loops forever is killed and
+reported as a failure, so a documentation mistake cannot wedge a CI job.
 
 ### Programmatically
 
@@ -97,13 +137,21 @@ echo "done"; // outputs done
 
 | Class | Description |
 |---|---|
-| `DocExec` | Facade: `check(string $path): DocumentResult`. |
+| `DocExec` | Facade: `check(string $path): DocumentResult`. Constructor takes `bootstrap:` and `timeoutSeconds:`. |
 | `MarkdownExtractor` | Extracts `php doc-exec` (or, with `strict: true`, bare `php`) fenced blocks. |
 | `DocumentResult` | `passed(): bool`, `failedIds(): list<string>` (stable ids of failing blocks). |
 | `BlockResult` | One fenced block's outcome: its statements, pass/fail, `stableId`. |
-| `StatementResult` | One statement's outcome (`Pass`/`Fail`/`Skip`) and failure message. |
+| `StatementResult` | One statement's outcome, its `Statement`, its `ParsedMarker`, and the failure message. |
+| `StatementOutcome` | `Pass` / `Fail` / `Skip` — the type of `StatementResult::$outcome`. |
+| `Statement\Statement` | One statement: `code`, `line` (first line of the statement), `trailingComment`, `kind`. |
+| `Statement\StatementKind` | `Expression` / `Import` / `Other` — what PHP considers the statement. |
+| `Statement\StatementParseError` | Thrown for a block that is not valid PHP; carries `blockLine`. |
+| `Marker\ParsedMarker` | A parsed marker: `type`, plus the payload fields for that type. |
+| `Marker\MarkerType` | `None` / `Equals` / `Throws` / `Outputs` / `Skip` / `Invalid`. |
+| `Cli\Arguments` | `parse(list<string> $arguments, string $workingDirectory): Arguments`, and `usage()`. |
+| `Cli\UsageError` | A command line that could not be understood, as opposed to a failing document. |
 | `StableId` | `compute(string $file, int $blockOrdinal, string $code): string` — `sha256`, stable across whitespace-only edits. |
-| `AutoloadFinder` | `find(string $startDir): ?string` — walks up for `vendor/autoload.php`. |
+| `AutoloadFinder` | `find(string $startDir): ?string` — walks up for `vendor/autoload.php`, stopping at the project boundary. |
 | `Report\ConsoleReporter` | `render(list<DocumentResult> $results): string`. |
 
 ## Security
@@ -113,9 +161,17 @@ echo "done"; // outputs done
   running the project's own test suite.
 - Use `// skip: <reason>` for any statement with side effects you do not want
   running in CI (network calls, filesystem writes outside a temp dir).
-- The bootstrap path is never derived from untrusted input; pass `--bootstrap`
-  explicitly in any automated context where the default upward search could
-  pick up an unexpected `vendor/autoload.php`.
+- The bootstrap path is never derived from untrusted input. The upward search
+  stops at the first `composer.json`/`.git` above the document, so it will not
+  silently borrow a parent project's autoloader; pass `--bootstrap` explicitly
+  when the layout is unusual.
+- The child process is bounded by wall-clock time, not by memory or
+  filesystem access: a block still runs with the full permissions of the user
+  running doc-exec.
+- The generated script is written to a temporary file created with
+  `tempnam()` (mode 0600, exclusive) and executed with the array form of
+  `proc_open` — no shell is involved at any point — and the file is removed
+  even if the run throws.
 
 ## Examples
 
@@ -123,7 +179,8 @@ See [examples/](examples/) for a runnable, self-checking sample document.
 
 | Script | Shows | Needs server? |
 |---|---|---|
-| `examples/sample.md` | All four markers plus scope-by-heading, checked via `bin/doc-exec` | no |
+| `examples/sample.md` | All four markers, closures and control flow, plus scope-by-heading — checked via `bin/doc-exec` | no |
+| `examples/programmatic.php` | Reading per-statement results through the `DocExec` API instead of the CLI | no |
 
 ## Development
 

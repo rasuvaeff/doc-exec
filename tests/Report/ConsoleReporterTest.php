@@ -71,4 +71,29 @@ final class ConsoleReporterTest
         Assert::string($rendered)->contains('failed to execute');
         Assert::string($rendered)->contains('PHP Parse error');
     }
+
+    public function theTotalCountsEveryBlockAcrossEveryDocument(): void
+    {
+        $render = static fn(string $file, bool ...$passed): DocumentResult => new DocumentResult(
+            file: $file,
+            blocks: array_map(
+                static fn(bool $ok, int $ordinal): BlockResult => new BlockResult(
+                    block: new CodeBlock(file: $file, ordinal: $ordinal, startLine: 1, code: '1;', scopeKey: ''),
+                    stableId: $file . $ordinal,
+                    statements: [],
+                    passed: $ok,
+                    processError: $ok ? null : 'boom',
+                ),
+                $passed,
+                array_keys($passed),
+            ),
+        );
+
+        $rendered = (new ConsoleReporter())->render([
+            $render('a.md', true, false, true),
+            $render('b.md', false),
+        ]);
+
+        Assert::string($rendered)->contains('2/4 blocks failed');
+    }
 }

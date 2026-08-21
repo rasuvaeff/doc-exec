@@ -52,4 +52,26 @@ final class StableIdTest
 
         Assert::false($a === $b);
     }
+
+    public function theOrdinalIsPartOfTheIdAndCannotBeConfusedWithTheFileName(): void
+    {
+        // Without the separators, ('a#1', 0) and ('a', 1) would hash the same
+        // string and two different blocks would share one history.
+        Assert::true(StableId::compute('a#1', 0, 'x') !== StableId::compute('a', 1, 'x'));
+    }
+
+    public function theFileIsPartOfTheId(): void
+    {
+        Assert::true(StableId::compute('a.md', 0, 'x') !== StableId::compute('b.md', 0, 'x'));
+    }
+
+    public function theCodeIsPartOfTheId(): void
+    {
+        Assert::true(StableId::compute('a.md', 0, 'x') !== StableId::compute('a.md', 0, 'y'));
+    }
+
+    public function theIdIsASha256Digest(): void
+    {
+        Assert::same(StableId::compute('a.md', 0, 'x'), hash('sha256', 'a.md#0#x'));
+    }
 }

@@ -13,18 +13,27 @@ composer require --dev rasuvaeff/doc-exec
 - A fenced code block only runs when its info string is exactly `php doc-exec`
   (case-insensitive). A bare ` ```php ` block is illustrative-only and never
   executed unless `MarkdownExtractor(strict: true)`.
-- Markers are trailing `//` comments on the SAME physical line as a top-level
-  statement's terminating `;` or `}`:
+- A block is split into top-level statements by `nikic/php-parser`, so every
+  construct PHP allows stays one statement: closures, `if`/`else`,
+  `try`/`catch`, `match`, anonymous classes, `do`/`while`.
+- Markers are trailing `//`/`#`/`/* */` comments on the SAME physical line as
+  the statement's last token:
   - *(none)* — the statement must not throw.
-  - `// => <expr>` — the statement's value equals `<expr>` (`var_export()` comparison).
+  - `// => <expr>` — the statement's value equals `<expr>` (`var_export()`
+    comparison, so state not identity). Only valid on an expression statement;
+    on `echo`/`if`/`foreach` it is reported as a mistake.
   - `// throws <FQCN>[ | <substring>]` — the statement throws `<FQCN>` (optionally
     with `<substring>` in the message).
   - `// outputs <text>` — the statement's stdout, trimmed, equals `<text>`, trimmed.
-  - `// skip[: <reason>]` — the statement is never executed.
-- Blocks under the same Markdown heading share one variable scope, in document
-  order; a new heading starts a fresh scope.
-- Every document runs in its own child `php` process (never `eval()`, never
-  in-process) with `vendor/autoload.php` required automatically.
+  - `// skip` or `// skip: <reason>` — the statement is never executed. The
+    grammar is strict: `// skip this in production` is prose and still runs.
+- Blocks under the same Markdown heading (ATX or setext) share one variable
+  scope, in document order; a new heading starts a fresh scope.
+- A block that is not valid PHP fails on its own, with the line number inside
+  the block; the other blocks of its scope group still run.
+- Every scope group runs in its own child `php` process (never `eval()`, never
+  in-process) with `vendor/autoload.php` required automatically, under a
+  wall-clock deadline (30 s default).
 
 ## API
 
@@ -32,7 +41,9 @@ composer require --dev rasuvaeff/doc-exec
 use Rasuvaeff\DocExec\DocExec;
 use Rasuvaeff\DocExec\Report\ConsoleReporter;
 
-$docExec = new DocExec(bootstrap: null); // null = auto-discover vendor/autoload.php upward
+// bootstrap: null = search upward for vendor/autoload.php, stopping at the
+// first composer.json/.git above the document.
+$docExec = new DocExec(bootstrap: null, timeoutSeconds: 30);
 $result = $docExec->check('README.md');
 
 $result->passed();     // bool
@@ -41,19 +52,58 @@ $result->failedIds();  // list<string>, sha256 stable ids of failing blocks
 echo (new ConsoleReporter())->render([$result]);
 ```
 
+### Result tree
+
 ```php
+use Rasuvaeff\DocExec\StatementOutcome;
+
+foreach ($result->blocks as $block) {          // list<BlockResult>
+    $block->block;        // CodeBlock: file, ordinal, startLine, code, scopeKey
+    $block->stableId;     // string, sha256 of file + ordinal + normalised code
+    $block->passed;       // bool
+    $block->processError; // ?string — set when the block never ran (parse error, timeout, dead process)
+
+    foreach ($block->statements as $statement) {   // list<StatementResult>
+        $statement->outcome;   // StatementOutcome::Pass | Fail | Skip
+        $statement->message;   // ?string, failure detail
+        $statement->statement; // Statement: code, line, trailingComment, kind
+        $statement->marker;    // ParsedMarker: type + payload
+    }
+}
+```
+
+- `StatementOutcome`: `Pass`, `Fail`, `Skip`.
+- `Statement\StatementKind`: `Expression`, `Import`, `Other`.
+- `Marker\MarkerType`: `None`, `Equals`, `Throws`, `Outputs`, `Skip`, `Invalid`.
+- `Marker\ParsedMarker` fields: `type`, `expression`, `exceptionClass`,
+  `exceptionSubstring`, `expectedOutput`, `skipReason`, `error`.
+- `Statement\StatementParseError` (`RuntimeException`): thrown by the splitter
+  for a block that is not valid PHP; `blockLine` is relative to the block.
+
+### Extraction and helpers
+
+```php
+use Rasuvaeff\DocExec\AutoloadFinder;
 use Rasuvaeff\DocExec\MarkdownExtractor;
+use Rasuvaeff\DocExec\StableId;
 
 $blocks = (new MarkdownExtractor())->extract($markdownString, 'README.md');
-// list<CodeBlock>: file, ordinal, startLine, code, scopeKey
+// list<CodeBlock>; indented fences are extracted and dedented
+
+(new AutoloadFinder())->find(__DIR__);                    // ?string
+StableId::compute('README.md', 0, '1 + 1; // => 2');      // string
 ```
 
-CLI (installed as `vendor/bin/doc-exec`):
+### CLI
 
 ```
-vendor/bin/doc-exec                              # checks ./README.md
-vendor/bin/doc-exec docs/a.md docs/b.md           # explicit files
+vendor/bin/doc-exec                                           # checks ./README.md
+vendor/bin/doc-exec docs/a.md docs/b.md                       # explicit files
 vendor/bin/doc-exec --bootstrap=tests/bootstrap.php README.md
+vendor/bin/doc-exec --timeout=60 docs/slow.md
+vendor/bin/doc-exec --help
 ```
 
-Exit code `0` when every block passed, `1` otherwise.
+Exit code `0` when every block passed, `1` when a block failed, `2` on a usage
+error (unknown option, missing file). Parsing lives in `Cli\Arguments::parse()`
+and raises `Cli\UsageError`.

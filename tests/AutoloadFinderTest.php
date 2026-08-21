@@ -76,4 +76,42 @@ final class AutoloadFinderTest
         // autoloader, and every failure would look like the document's fault.
         Assert::null((new AutoloadFinder())->find($this->root . '/sibling/docs'));
     }
+
+    public function aTrailingSlashOnTheStartDirectoryIsHandled(): void
+    {
+        Assert::same((new AutoloadFinder())->find($this->root . '/'), $this->root . '/vendor/autoload.php');
+    }
+
+    public function aGitDirectoryAlsoMarksTheProjectBoundary(): void
+    {
+        mkdir($this->root . '/gitproject/docs', recursive: true);
+        mkdir($this->root . '/gitproject/.git');
+
+        try {
+            Assert::null((new AutoloadFinder())->find($this->root . '/gitproject/docs'));
+        } finally {
+            rmdir($this->root . '/gitproject/.git');
+            rmdir($this->root . '/gitproject/docs');
+            rmdir($this->root . '/gitproject');
+        }
+    }
+
+    public function aProjectsOwnVendorWinsOverItsBoundaryMarker(): void
+    {
+        mkdir($this->root . '/withvendor/vendor', recursive: true);
+        file_put_contents($this->root . '/withvendor/composer.json', "{}\n");
+        file_put_contents($this->root . '/withvendor/vendor/autoload.php', "<?php\n");
+
+        try {
+            Assert::same(
+                (new AutoloadFinder())->find($this->root . '/withvendor'),
+                $this->root . '/withvendor/vendor/autoload.php',
+            );
+        } finally {
+            unlink($this->root . '/withvendor/vendor/autoload.php');
+            unlink($this->root . '/withvendor/composer.json');
+            rmdir($this->root . '/withvendor/vendor');
+            rmdir($this->root . '/withvendor');
+        }
+    }
 }

@@ -8,6 +8,7 @@ use Rasuvaeff\DocExec\Cli\Arguments;
 use Rasuvaeff\DocExec\Cli\UsageError;
 use Testo\Assert;
 use Testo\Codecov\Covers;
+use Testo\Data\DataProvider;
 use Testo\Expect;
 use Testo\Lifecycle\AfterTest;
 use Testo\Lifecycle\BeforeTest;
@@ -129,5 +130,58 @@ final class ArgumentsTest
         Assert::string($usage)->contains('--bootstrap=');
         Assert::string($usage)->contains('--timeout=');
         Assert::string($usage)->contains('--help');
+    }
+
+    public function aTrailingSlashOnTheWorkingDirectoryDoesNotDoubleUp(): void
+    {
+        $arguments = Arguments::parse([], $this->directory . '/');
+
+        Assert::same($arguments->files, [$this->directory . '/README.md']);
+    }
+
+    #[DataProvider('rejectedTimeoutProvider')]
+    public function malformedTimeoutValuesAreRejected(string $value): void
+    {
+        Expect::exception(UsageError::class)->withMessageContaining('positive whole number');
+
+        Arguments::parse(['--timeout=' . $value], $this->directory);
+    }
+
+    public static function rejectedTimeoutProvider(): iterable
+    {
+        yield 'empty' => [''];
+        yield 'zero' => ['0'];
+        yield 'negative' => ['-5'];
+        yield 'signed positive' => ['+5'];
+        yield 'fractional' => ['1.5'];
+        yield 'scientific' => ['1e3'];
+        yield 'trailing text' => ['5s'];
+        yield 'leading text' => ['s5'];
+        yield 'leading newline' => ["\n5"];
+        yield 'trailing newline' => ["5\n"];
+    }
+
+    public function oneSecondIsTheSmallestAcceptedTimeout(): void
+    {
+        Assert::same(Arguments::parse(['--timeout=1'], $this->directory)->timeoutSeconds, 1);
+    }
+
+    public function aLargeTimeoutIsAccepted(): void
+    {
+        Assert::same(Arguments::parse(['--timeout=3600'], $this->directory)->timeoutSeconds, 3600);
+    }
+
+    public function anEmptyBootstrapValueIsRejected(): void
+    {
+        Expect::exception(UsageError::class)->withMessageContaining('empty bootstrap path');
+
+        Arguments::parse(['--bootstrap='], $this->directory);
+    }
+
+    public function aDirectoryIsNotADocument(): void
+    {
+        Expect::exception(UsageError::class)->withMessageContaining('does not exist');
+
+        Arguments::parse([$this->directory], '/nowhere');
     }
 }

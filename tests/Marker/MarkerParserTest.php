@@ -106,4 +106,101 @@ final class MarkerParserTest
         Assert::same($marker->type, MarkerType::Skip);
         Assert::null($marker->skipReason);
     }
+
+    #[DataProvider('anchoredGrammarProvider')]
+    public function aMarkerKeywordMustStartTheComment(string $comment): void
+    {
+        // The patterns are anchored on purpose: prose that merely mentions a
+        // keyword is not an assertion.
+        Assert::same((new MarkerParser())->parse($comment)->type, MarkerType::None);
+    }
+
+    public static function anchoredGrammarProvider(): iterable
+    {
+        yield 'throws mid-sentence' => ['this throws RuntimeException sometimes'];
+        yield 'outputs mid-sentence' => ['it outputs the total'];
+        yield 'skip mid-sentence' => ['we skip: this in dev'];
+        yield 'arrow mid-sentence' => ['maps a => b'];
+    }
+
+    #[DataProvider('trailingContentProvider')]
+    public function aMarkerConsumesTheRestOfTheComment(string $comment, MarkerType $expected): void
+    {
+        Assert::same((new MarkerParser())->parse($comment)->type, $expected);
+    }
+
+    public static function trailingContentProvider(): iterable
+    {
+        yield 'throws with a fqcn' => ['throws \\Rasuvaeff\\DocExec\\Cli\\UsageError', MarkerType::Throws];
+        yield 'outputs multiline' => ["outputs first\nsecond", MarkerType::Outputs];
+    }
+
+    public function throwsWithoutAClassNameIsNotAMarker(): void
+    {
+        Assert::same((new MarkerParser())->parse('throws')->type, MarkerType::None);
+    }
+
+    public function outputsWithoutTextIsNotAMarker(): void
+    {
+        Assert::same((new MarkerParser())->parse('outputs')->type, MarkerType::None);
+    }
+
+    public function surroundingWhitespaceIsIgnored(): void
+    {
+        $marker = (new MarkerParser())->parse('   => 5   ');
+
+        Assert::same($marker->type, MarkerType::Equals);
+        Assert::same($marker->expression, '5');
+    }
+
+    public function anExceptionSubstringIsTrimmed(): void
+    {
+        $marker = (new MarkerParser())->parse('throws RuntimeException |   boom   ');
+
+        Assert::same($marker->exceptionSubstring, 'boom');
+    }
+
+    public function aWhitespaceOnlyCommentIsNotAMarker(): void
+    {
+        Assert::same((new MarkerParser())->parse('   ')->type, MarkerType::None);
+    }
+
+    #[DataProvider('unanchoredTailProvider')]
+    public function aMarkerMustMatchTheWholeComment(string $comment): void
+    {
+        // The patterns are anchored at both ends: a trailing fragment means
+        // the comment was prose that merely begins like a marker.
+        Assert::same((new MarkerParser())->parse($comment)->type, MarkerType::None);
+    }
+
+    public static function unanchoredTailProvider(): iterable
+    {
+        yield 'throws with a second line' => ["throws RuntimeException\nand then recovers"];
+        yield 'skip with a second line' => ["skip: later\nbut not now"];
+    }
+
+    public function aCommentPaddedWithWhitespaceStillParses(): void
+    {
+        $marker = (new MarkerParser())->parse("  skip: flaky in CI  ");
+
+        Assert::same($marker->type, MarkerType::Skip);
+        Assert::same($marker->skipReason, 'flaky in CI');
+    }
+
+    public function anOutputsPayloadKeepsItsInnerSpacingButNotItsEdges(): void
+    {
+        $marker = (new MarkerParser())->parse('outputs one  two');
+
+        Assert::same($marker->expectedOutput, 'one  two');
+    }
+
+    public function throwsRequiresWhitespaceAfterTheKeyword(): void
+    {
+        Assert::same((new MarkerParser())->parse('throwsRuntimeException')->type, MarkerType::None);
+    }
+
+    public function skipRequiresTheColonFormForAReason(): void
+    {
+        Assert::same((new MarkerParser())->parse('skipping the cache')->type, MarkerType::None);
+    }
 }
