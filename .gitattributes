@@ -1,3 +1,8 @@
+# Checked out with LF everywhere, including on Windows: the suite compares
+# multi-line strings taken from heredocs against expected code, so a CRLF
+# working copy would fail tests over line endings rather than behaviour.
+* text=auto eol=lf
+
 /.editorconfig export-ignore
 /.gitattributes export-ignore
 /.gitignore export-ignore

@@ -15,7 +15,8 @@ namespace Rasuvaeff\DocExec;
  *
  * Fences carry their indentation: a block nested in a list item or a
  * blockquote is extracted, and the opening fence's indentation is stripped
- * from its lines so the code is still valid PHP.
+ * from its lines so the code is still valid PHP. Line endings are normalised,
+ * so a document saved with CRLF behaves exactly like one saved with LF.
  *
  * @api
  */
@@ -31,7 +32,11 @@ final readonly class MarkdownExtractor
      */
     public function extract(string $markdown, string $file): array
     {
-        $lines = explode("\n", $markdown);
+        // A document written on Windows arrives with CRLF (and an old Mac
+        // one with bare CR): normalising here keeps a stray \r out of the
+        // info string, the heading text and — most importantly — the code
+        // handed to the parser.
+        $lines = preg_split('/\r\n|\r|\n/', $markdown) ?: [];
         $blocks = [];
         $scopeKey = '';
         /** @var int<0, max> $ordinal */
