@@ -13,6 +13,11 @@ namespace Rasuvaeff\DocExec;
  */
 final readonly class StableId
 {
+    /**
+     * @param non-empty-string $file
+     * @param int<0, max> $blockOrdinal
+     * @return non-empty-string
+     */
     public static function compute(string $file, int $blockOrdinal, string $code): string
     {
         return hash('sha256', $file . '#' . $blockOrdinal . '#' . self::normalize($code));

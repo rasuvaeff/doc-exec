@@ -5,6 +5,19 @@ declare(strict_types=1);
 namespace Rasuvaeff\DocExec\Execution;
 
 /**
+ * The one row shape the results channel carries, normalised on arrival by
+ * {@see ProcessRunner}: every value present is a string, so nothing
+ * downstream has to re-check what the child process claimed.
+ *
+ * @psalm-type ResultRow = array{
+ *     status?: string,
+ *     note?: string,
+ *     exception?: string,
+ *     actual?: string,
+ *     expected?: string,
+ *     output?: string,
+ * }
+ *
  * What one child process produced: its exit code, both output streams, the
  * per-slot rows it reported over fd 3 (null when it never reported usable
  * ones), and whether it was killed for exceeding its wall-clock budget.
@@ -14,7 +27,7 @@ namespace Rasuvaeff\DocExec\Execution;
 final readonly class ProcessOutcome
 {
     /**
-     * @param list<array<string, mixed>>|null $results
+     * @param list<ResultRow>|null $results
      */
     public function __construct(
         public int $exitCode,

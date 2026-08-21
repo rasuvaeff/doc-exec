@@ -16,6 +16,8 @@ use RuntimeException;
  * them into scopes by heading, and executes each scope group in its own
  * child PHP process.
  *
+ * @psalm-import-type ResultRow from \Rasuvaeff\DocExec\Execution\ProcessOutcome
+ *
  * @api
  */
 final readonly class DocExec
@@ -42,6 +44,9 @@ final readonly class DocExec
         $this->autoloadFinder = $autoloadFinder ?? new AutoloadFinder();
     }
 
+    /**
+     * @param non-empty-string $path
+     */
     public function check(string $path): DocumentResult
     {
         $markdown = file_get_contents($path);
@@ -194,10 +199,8 @@ final readonly class DocExec
         $byBlock = [];
 
         foreach ($script->slots as $index => $slot) {
-            /** @var array<string, mixed> $raw */
-            $raw = \is_array($results[$index] ?? null)
-                ? $results[$index]
-                : ['status' => 'fail', 'note' => 'no result reported for this statement'];
+            /** @var ResultRow $raw */
+            $raw = $results[$index] ?? ['status' => 'fail', 'note' => 'no result reported for this statement'];
 
             $statementResult = $this->toStatementResult($slot, $raw);
             $ordinal = $slot->block->ordinal;
@@ -233,17 +236,11 @@ final readonly class DocExec
     }
 
     /**
-     * @param array<string, mixed> $raw
+     * @param ResultRow $raw
      */
     private function toStatementResult(ScriptSlot $slot, array $raw): StatementResult
     {
-        $status = 'fail';
-
-        if (isset($raw['status']) && \is_string($raw['status'])) {
-            $status = $raw['status'];
-        }
-
-        $outcome = match ($status) {
+        $outcome = match ($raw['status'] ?? 'fail') {
             'pass' => StatementOutcome::Pass,
             'skip' => StatementOutcome::Skip,
             default => StatementOutcome::Fail,
@@ -262,32 +259,27 @@ final readonly class DocExec
     }
 
     /**
-     * @param array<string, mixed> $raw
+     * @param ResultRow $raw
      */
     private function buildFailureMessage(array $raw): string
     {
         /** @var list<string> $parts */
         $parts = [];
 
-        if (isset($raw['note']) && \is_string($raw['note'])) {
+        if (isset($raw['note'])) {
             $parts[] = $raw['note'];
         }
 
-        if (isset($raw['exception']) && \is_string($raw['exception'])) {
+        if (isset($raw['exception'])) {
             $parts[] = 'exception: ' . $raw['exception'];
         }
 
-        if (\array_key_exists('actual', $raw) && \array_key_exists('expected', $raw)) {
-            $parts[] = 'expected ' . $this->stringify($raw['expected']) . ', got ' . $this->stringify($raw['actual']);
-        } elseif (\array_key_exists('expected', $raw) && \array_key_exists('output', $raw)) {
-            $parts[] = 'expected output ' . $this->stringify($raw['expected']) . ', got ' . $this->stringify($raw['output']);
+        if (isset($raw['expected'], $raw['actual'])) {
+            $parts[] = 'expected ' . $raw['expected'] . ', got ' . $raw['actual'];
+        } elseif (isset($raw['expected'], $raw['output'])) {
+            $parts[] = 'expected output ' . $raw['expected'] . ', got ' . $raw['output'];
         }
 
         return $parts === [] ? 'failed' : implode('; ', $parts);
-    }
-
-    private function stringify(mixed $value): string
-    {
-        return \is_string($value) ? $value : var_export($value, return: true);
     }
 }
