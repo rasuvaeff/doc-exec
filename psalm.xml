@@ -6,6 +6,7 @@
 >
     <projectFiles>
         <directory name="src"/>
+        <file name="bin/doc-exec"/>
         <ignoreFiles>
             <directory name="vendor"/>
         </ignoreFiles>

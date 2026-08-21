@@ -24,6 +24,8 @@ final class AutoloadFinderTest
         mkdir($this->root . '/vendor', recursive: true);
         file_put_contents($this->root . '/vendor/autoload.php', "<?php\n");
         mkdir($this->root . '/nested/deep', recursive: true);
+        mkdir($this->root . '/sibling/docs', recursive: true);
+        file_put_contents($this->root . '/sibling/composer.json', "{}\n");
     }
 
     #[AfterTest]
@@ -33,6 +35,9 @@ final class AutoloadFinderTest
         @rmdir($this->root . '/vendor');
         @rmdir($this->root . '/nested/deep');
         @rmdir($this->root . '/nested');
+        @unlink($this->root . '/sibling/composer.json');
+        @rmdir($this->root . '/sibling/docs');
+        @rmdir($this->root . '/sibling');
         @rmdir($this->root);
     }
 
@@ -62,5 +67,13 @@ final class AutoloadFinderTest
         } finally {
             @rmdir($isolated);
         }
+    }
+
+    public function theWalkStopsAtAProjectOfItsOwnRatherThanBorrowingAParentVendor(): void
+    {
+        // The sibling project has its own composer.json but no vendor/ yet.
+        // Walking past it would silently bootstrap an unrelated project's
+        // autoloader, and every failure would look like the document's fault.
+        Assert::null((new AutoloadFinder())->find($this->root . '/sibling/docs'));
     }
 }

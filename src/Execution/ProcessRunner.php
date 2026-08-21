@@ -97,7 +97,7 @@ final readonly class ProcessRunner
         }
 
         /** @var mixed $decoded */
-        $decoded = json_decode($raw, true);
+        $decoded = json_decode($raw, associative: true);
 
         if (!\is_array($decoded) || !array_is_list($decoded)) {
             return null;
@@ -127,15 +127,15 @@ final readonly class ProcessRunner
         /** @var array<int, resource> $open */
         $open = [1 => $pipes[1], 2 => $pipes[2], 3 => $pipes[3]];
         $buffers = [1 => '', 2 => '', 3 => ''];
-        $deadline = hrtime(true) + $this->timeoutSeconds * 1_000_000_000;
+        $deadline = hrtime(as_number: true) + $this->timeoutSeconds * 1_000_000_000;
         $timedOut = false;
 
         foreach ($open as $pipe) {
-            stream_set_blocking($pipe, false);
+            stream_set_blocking($pipe, enable: false);
         }
 
         while ($open !== []) {
-            if (hrtime(true) > $deadline) {
+            if (hrtime(as_number: true) > $deadline) {
                 $timedOut = true;
                 proc_terminate($process, 9);
 
@@ -152,7 +152,7 @@ final readonly class ProcessRunner
             }
 
             foreach ($open as $fd => $pipe) {
-                if (!\in_array($pipe, $read, true)) {
+                if (!\in_array($pipe, $read, strict: true)) {
                     continue;
                 }
 

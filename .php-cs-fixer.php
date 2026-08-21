@@ -10,7 +10,12 @@ $finder = (new Finder())
         __DIR__ . '/src',
         __DIR__ . '/tests',
         __DIR__ . '/examples',
-    ]);
+        __DIR__ . '/benchmarks',
+    ])
+    // The CLI entry point is declared in composer.json "bin" and is part of
+    // the public contract, but it has no .php extension, so the Finder needs
+    // it named explicitly.
+    ->append([__DIR__ . '/bin/doc-exec']);
 
 return (new Config())
     ->setUsingCache(false)
