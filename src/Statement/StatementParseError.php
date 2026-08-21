@@ -15,9 +15,12 @@ use RuntimeException;
  */
 final class StatementParseError extends RuntimeException
 {
+    /**
+     * @param positive-int $blockLine
+     */
     public function __construct(
         string $message,
-        public int $blockLine,
+        public readonly int $blockLine,
     ) {
         parent::__construct($message);
     }

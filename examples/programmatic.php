@@ -41,8 +41,10 @@ foreach ($result->blocks as $block) {
     }
 }
 
-// failedIds() returns the stable id of each failing block: the id survives
-// edits elsewhere in the document, so it can be tracked over time.
+// failedIds() returns the stable id of each failing block. The id is derived
+// from the file path, the block's ordinal and its normalised code, so it holds
+// across formatting-only edits to the block and across edits that leave those
+// three alone — but a rewritten or relocated block gets a new one.
 printf("\nfailed block ids: %s\n", $result->failedIds() === [] ? '(none)' : implode(', ', $result->failedIds()));
 
 exit($result->passed() ? 0 : 1);

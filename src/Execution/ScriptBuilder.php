@@ -65,14 +65,22 @@ final readonly class ScriptBuilder
             }
 
             foreach ($statements as $statement) {
-                // `use <Ns>\<Class>;` (and `use function …`/`use const …`) is a
-                // compile-time import declaration: PHP only allows it at the
-                // top level of a file, never inside a block. Wrapping it in
-                // try/catch like every other statement would be a syntax
-                // error, so it is emitted verbatim and carries no marker.
-                if ($statement->kind === StatementKind::Import) {
+                // `use <Ns>\<Class>;` and `const NAME = …;` are compile-time
+                // declarations: PHP only allows them at the top level of a
+                // file, never inside a block. Wrapping either in try/catch
+                // like every other statement would be a syntax error, so they
+                // are emitted verbatim and carry no marker.
+                if ($statement->kind === StatementKind::Import || $statement->kind === StatementKind::Constant) {
                     $body[] = $statement->code . "\n";
 
+                    continue;
+                }
+
+                // A document's own `declare(strict_types=…)` cannot be
+                // emitted at all: the generated script already declares its
+                // own, and PHP requires that to be the very first statement
+                // of the file.
+                if ($statement->kind === StatementKind::FileDeclaration) {
                     continue;
                 }
 
@@ -84,11 +92,11 @@ final readonly class ScriptBuilder
         }
 
         $source = "<?php\n\ndeclare(strict_types=1);\n\n"
-            // The results path arrives as argv[1] rather than over a file
-            // descriptor: descriptors above 2 cannot be read by a child
-            // process on Windows, and a doctest runner has no business being
-            // POSIX-only. The file keeps outcomes out of the document's own
-            // stdout just as fd 3 did, and is not bounded by a pipe buffer.
+            // The results path arrives as argv[1]: a dedicated file
+            // descriptor would have been unreadable by the child on Windows,
+            // and a doctest runner has no business being POSIX-only. A file
+            // still keeps outcomes out of the document's own stdout, and is
+            // not bounded by a pipe buffer.
             . "\$__docexec_results_file = \$argv[1];\n"
             . 'require_once ' . $this->literal($bootstrap) . ";\n\n"
             . "\$__docexec_results = [];\n\n"

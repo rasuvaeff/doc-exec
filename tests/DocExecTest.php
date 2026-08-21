@@ -305,14 +305,6 @@ final class DocExecTest
         Assert::false($result->blocks[0]->passed);
     }
 
-    /**
-     * Self-check: for any subset of a catalog of known-good and
-     * deliberately-stale blocks, doc-exec must flag exactly the stale ones
-     * — no false negatives (a real doc-rot slips through) and no false
-     * positives (a healthy example gets reported as broken).
-     *
-     * @param list<bool> $include
-     */
     public function aBlockWritingOnlyToStderrReportsThatText(): void
     {
         $result = $this->check(<<<'MD'
@@ -409,6 +401,49 @@ final class DocExecTest
         Assert::false($result->passed());
     }
 
+    public function aMarkerKeywordWithNoPayloadFailsTheStatement(): void
+    {
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            1 + 1; // throws
+            ```
+            MD);
+
+        Assert::false($result->passed());
+        Assert::string((string) $result->blocks[0]->statements[0]->message)->contains('exception class name');
+    }
+
+    public function aConstantDeclaredInABlockIsUsableByLaterStatements(): void
+    {
+        // `const` is compile-time: wrapped in the per-statement try/catch it
+        // would be a parse error and would fail the whole scope group.
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            const DOC_EXEC_GREETING = 'hi';
+
+            DOC_EXEC_GREETING; // => 'hi'
+            ```
+            MD);
+
+        Assert::true($result->passed());
+    }
+
+    public function aDocumentsOwnStrictTypesDeclarationDoesNotBreakTheRun(): void
+    {
+        // Copy-pasted from a real file header: the generated script already
+        // declares strict_types, and PHP allows that only as the very first
+        // statement, so the document's own is dropped rather than emitted.
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            declare(strict_types=1);
+
+            1 + 1; // => 2
+            ```
+            MD);
+
+        Assert::true($result->passed());
+    }
+
     public function whitespaceOnlyOnAStreamIsNotADiagnostic(): void
     {
         // Without trimming before the emptiness check, a stray newline on
@@ -464,6 +499,14 @@ final class DocExecTest
         Assert::string((string) $result->blocks[0]->statements[0]->message)->contains('no result reported');
     }
 
+    /**
+     * Self-check: for any subset of a catalog of known-good and
+     * deliberately-stale blocks, doc-exec must flag exactly the stale ones
+     * — no false negatives (a real doc-rot slips through) and no false
+     * positives (a healthy example gets reported as broken).
+     *
+     * @param list<bool> $include
+     */
     #[Property(runs: 120, timeoutMs: 20_000)]
     public function docExecFindsExactlyTheStaleBlocks(array $include, bool $healthyOnly): void
     {
@@ -499,7 +542,7 @@ final class DocExecTest
         file_put_contents($file, $markdown);
         $this->tempFiles[] = $file;
 
-        $result = (new DocExec(bootstrap: $this->bootstrap))->check($file);
+        $result = (new DocExec(bootstrap: $this->bootstrap, timeoutSeconds: 5))->check($file);
 
         $expectedIds = array_map(
             static fn(int $ordinal): string => StableId::compute($file, $ordinal, $codes[$ordinal]),
@@ -631,6 +674,9 @@ final class DocExecTest
         file_put_contents($file, $markdown);
         $this->tempFiles[] = $file;
 
-        return (new DocExec(bootstrap: $this->bootstrap))->check($file);
+        // An explicit small budget rather than the 30-second default: a
+        // mutant that breaks the deadline must die quickly enough for
+        // Infection to record a kill instead of skipping the mutant.
+        return (new DocExec(bootstrap: $this->bootstrap, timeoutSeconds: 5))->check($file);
     }
 }

@@ -150,7 +150,7 @@ echo "done"; // outputs done
 | `Marker\MarkerType` | `None` / `Equals` / `Throws` / `Outputs` / `Skip` / `Invalid`. |
 | `Cli\Arguments` | `parse(list<string> $arguments, string $workingDirectory): Arguments`, and `usage()`. |
 | `Cli\UsageError` | A command line that could not be understood, as opposed to a failing document. |
-| `StableId` | `compute(string $file, int $blockOrdinal, string $code): string` — `sha256`, stable across whitespace-only edits. |
+| `StableId` | `compute(string $file, int $blockOrdinal, string $code): string` — `sha256` of the file path, the block's ordinal and its whitespace-normalised code. The id holds while all three do; editing the block, moving it past another executable block, or renaming the file produces a new one. |
 | `AutoloadFinder` | `find(string $startDir): ?string` — walks up for `vendor/autoload.php`, stopping at the project boundary. |
 | `Report\ConsoleReporter` | `render(list<DocumentResult> $results): string`. |
 

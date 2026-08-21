@@ -25,10 +25,16 @@ First release.
 - CLI: `vendor/bin/doc-exec [--bootstrap=<file>] [--timeout=<seconds>] [--help]
   [file.md ...]`, defaulting to `./README.md`. Exit `0` all passed, `1` a block
   failed, `2` a usage error.
-- Runs on Windows as well as POSIX systems: outcomes are reported through a
-  temporary file rather than file descriptor 3, which Windows cannot expose
-  to a child process. Documents are read the same whether they are saved with
-  LF, CRLF or CR line endings.
+- Runs on Windows as well as POSIX systems: the child process communicates
+  entirely through files rather than pipes, so neither the unreachable file
+  descriptor 3 nor `stream_select()`'s behaviour on Windows pipes applies.
+  Documents are read the same whether they are saved with LF, CRLF or CR line
+  endings.
+- `use` and `const` declarations inside a block are emitted at file level,
+  where PHP accepts them; a document's own `declare(strict_types=…)` is
+  dropped, since the generated script declares its own first.
+- A marker keyword with no payload — `// =>`, `// throws`, `// outputs` —
+  fails the statement with a diagnostic instead of silently reading as prose.
 - Programmatic API: `DocExec::check()` returning `DocumentResult` →
   `BlockResult` → `StatementResult`, plus `StableId` for tracking a block
   across edits elsewhere in the document.

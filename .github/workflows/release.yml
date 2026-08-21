@@ -29,6 +29,23 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          extensions: json, mbstring, tokenizer
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      # A tag is what Packagist publishes, so the gate runs here too rather
+      # than trusting that whoever tagged had run it. bc-check is included:
+      # it is a no-op until a previous tag exists.
+      - name: Verify the tagged commit
+        run: composer release-check
+
       - name: Extract the changelog section for this tag
         env:
           TAG: ${{ github.ref_name }}

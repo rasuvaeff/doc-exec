@@ -152,7 +152,7 @@ echo "done"; // outputs done
 | `Marker\MarkerType` | `None` / `Equals` / `Throws` / `Outputs` / `Skip` / `Invalid`. |
 | `Cli\Arguments` | `parse(list<string> $arguments, string $workingDirectory): Arguments` и `usage()`. |
 | `Cli\UsageError` | Командная строка, которую не удалось понять (в отличие от упавшего документа). |
-| `StableId` | `compute(string $file, int $blockOrdinal, string $code): string` — `sha256`, стабилен при чисто пробельных правках. |
+| `StableId` | `compute(string $file, int $blockOrdinal, string $code): string` — `sha256` от пути файла, порядкового номера блока и его кода с нормализованными пробелами. Id держится, пока держатся все три: правка блока, его перемещение за другой исполняемый блок или переименование файла дают новый id. |
 | `AutoloadFinder` | `find(string $startDir): ?string` — ищет `vendor/autoload.php` вверх по дереву, останавливаясь на границе проекта. |
 | `Report\ConsoleReporter` | `render(list<DocumentResult> $results): string`. |
 

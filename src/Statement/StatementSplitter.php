@@ -193,7 +193,25 @@ final readonly class StatementSplitter
         return match (true) {
             $node instanceof Stmt\Expression => StatementKind::Expression,
             $node instanceof Stmt\Use_, $node instanceof Stmt\GroupUse => StatementKind::Import,
+            $node instanceof Stmt\Const_ => StatementKind::Constant,
+            $node instanceof Stmt\Declare_ => $this->declareKind($node),
             default => StatementKind::Other,
         };
+    }
+
+    /**
+     * `declare(ticks=…)` is an ordinary runtime statement and may sit inside a
+     * block; `strict_types` and `encoding` are compile-time and only valid as
+     * a file's first statement.
+     */
+    private function declareKind(Stmt\Declare_ $node): StatementKind
+    {
+        foreach ($node->declares as $declare) {
+            if (\in_array($declare->key->toLowerString(), ['strict_types', 'encoding'], strict: true)) {
+                return StatementKind::FileDeclaration;
+            }
+        }
+
+        return StatementKind::Other;
     }
 }

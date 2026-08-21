@@ -17,7 +17,7 @@ final class ProcessRunnerTest
 {
     public function reportsStdoutStderrAndExitCode(): void
     {
-        $outcome = (new ProcessRunner())->run(
+        $outcome = (new ProcessRunner(timeoutSeconds: 5))->run(
             "<?php\nfwrite(STDOUT, 'out');\nfwrite(STDERR, 'err');\nexit(4);\n",
         );
 
@@ -29,19 +29,20 @@ final class ProcessRunnerTest
 
     public function readsResultRowsFromTheDedicatedDescriptor(): void
     {
-        $outcome = (new ProcessRunner())->run($this->scriptReporting("[['status' => 'pass'], ['status' => 'skip']]"));
+        $outcome = (new ProcessRunner(timeoutSeconds: 5))->run($this->scriptReporting("[['status' => 'pass'], ['status' => 'skip']]"));
 
         Assert::same($outcome->results, [['status' => 'pass'], ['status' => 'skip']]);
     }
 
     public function theChildIsHandedAWritableResultsPathAsItsFirstArgument(): void
     {
-        $outcome = (new ProcessRunner())->run(
+        $outcome = (new ProcessRunner(timeoutSeconds: 5))->run(
             "<?php\nfile_put_contents(\$argv[1], json_encode([['status' => 'pass', 'note' => \$argv[1]]]));\n",
         );
 
         Assert::same(\count((array) $outcome->results), 1);
-        Assert::string((string) ($outcome->results[0]['note'] ?? ''))->contains('doc-exec-results-');
+        Assert::true(is_writable(\dirname((string) ($outcome->results[0]['note'] ?? '/nowhere'))));
+        Assert::string((string) ($outcome->results[0]['note'] ?? ''))->contains('doc-exec-');
     }
 
     public function keepsResultsSeparateFromWhatTheDocumentPrints(): void
@@ -49,7 +50,7 @@ final class ProcessRunnerTest
         $source = "<?php\necho 'printed by the doc';\n"
             . "file_put_contents(\$argv[1], json_encode([['status' => 'pass']]));\n";
 
-        $outcome = (new ProcessRunner())->run($source);
+        $outcome = (new ProcessRunner(timeoutSeconds: 5))->run($source);
 
         Assert::same($outcome->stdout, 'printed by the doc');
         Assert::same($outcome->results, [['status' => 'pass']]);
@@ -59,7 +60,7 @@ final class ProcessRunnerTest
     {
         // Slots are numbered 0..n-1, so results are a list. An object would
         // silently mis-align every slot against its statement.
-        $outcome = (new ProcessRunner())->run($this->scriptReporting("['x' => ['status' => 'pass']]"));
+        $outcome = (new ProcessRunner(timeoutSeconds: 5))->run($this->scriptReporting("['x' => ['status' => 'pass']]"));
 
         Assert::null($outcome->results);
     }
@@ -68,22 +69,22 @@ final class ProcessRunnerTest
     {
         $source = "<?php\nfile_put_contents(\$argv[1], '[{\"status\":');\n";
 
-        Assert::null((new ProcessRunner())->run($source)->results);
+        Assert::null((new ProcessRunner(timeoutSeconds: 5))->run($source)->results);
     }
 
     public function anEmptyResultsChannelYieldsNoResults(): void
     {
-        Assert::null((new ProcessRunner())->run("<?php\n")->results);
+        Assert::null((new ProcessRunner(timeoutSeconds: 5))->run("<?php\n")->results);
     }
 
     public function aScalarOnTheResultsChannelIsNotAcceptedAsResults(): void
     {
-        Assert::null((new ProcessRunner())->run($this->scriptReporting('42'))->results);
+        Assert::null((new ProcessRunner(timeoutSeconds: 5))->run($this->scriptReporting('42'))->results);
     }
 
     public function aRowThatIsNotAnArrayInvalidatesTheWholeBatch(): void
     {
-        Assert::null((new ProcessRunner())->run($this->scriptReporting("[['status' => 'pass'], 'oops']"))->results);
+        Assert::null((new ProcessRunner(timeoutSeconds: 5))->run($this->scriptReporting("[['status' => 'pass'], 'oops']"))->results);
     }
 
     public function aBlockThatNeverFinishesIsKilledAndFlagged(): void
@@ -121,20 +122,46 @@ final class ProcessRunnerTest
 
     public function noTemporaryFileSurvivesTheRun(): void
     {
-        $before = $this->tempDirectoryListing();
+        // The paths this run used are reported by the run itself, so the
+        // check names exact files instead of diffing a shared directory that
+        // any other process — or a parallel test — may also be writing to.
+        $paths = $this->pathsUsedByARun();
 
-        (new ProcessRunner())->run($this->scriptReporting("[['status' => 'pass']]"));
+        Assert::true($paths !== []);
 
-        Assert::same($this->tempDirectoryListing(), $before);
+        foreach ($paths as $path) {
+            Assert::false(file_exists($path));
+        }
     }
 
     public function theResultsFileIsRemovedEvenWhenTheChildIsKilled(): void
     {
-        $before = $this->tempDirectoryListing();
+        $marker = sys_get_temp_dir() . '/doc-exec-killed-' . bin2hex(random_bytes(6));
 
-        (new ProcessRunner(timeoutSeconds: 1))->run("<?php\nwhile (true) {}\n");
+        try {
+            (new ProcessRunner(timeoutSeconds: 1))->run(
+                "<?php\nfile_put_contents('" . $marker . "', \$argv[1]);\nwhile (true) {}\n",
+            );
 
-        Assert::same($this->tempDirectoryListing(), $before);
+            $resultsFile = (string) file_get_contents($marker);
+
+            Assert::true($resultsFile !== '');
+            Assert::false(file_exists($resultsFile));
+        } finally {
+            @unlink($marker);
+        }
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function pathsUsedByARun(): array
+    {
+        $source = "<?php\nfile_put_contents(\$argv[1], json_encode([['status' => 'pass', 'note' => \$argv[0] . '|' . \$argv[1]]]));\n";
+
+        $note = (string) ((new ProcessRunner(timeoutSeconds: 5))->run($source)->results[0]['note'] ?? '');
+
+        return $note === '' ? [] : explode('|', $note);
     }
 
     public function anUnusablePhpBinaryIsReportedRatherThanSilentlyPassing(): void
@@ -161,7 +188,7 @@ final class ProcessRunnerTest
         // The rows come from a child process running the document's own code:
         // narrowing them here is what lets the rest of the package read the
         // shape without re-checking every field.
-        $outcome = (new ProcessRunner())->run(
+        $outcome = (new ProcessRunner(timeoutSeconds: 5))->run(
             $this->scriptReporting("[['status' => 'pass', 'output' => 42, 'note' => null, 'extra' => 'x']]"),
         );
 
@@ -175,7 +202,7 @@ final class ProcessRunnerTest
         $source = "<?php\nfwrite(STDOUT, 'o');\nfwrite(STDERR, 'e');\n"
             . "file_put_contents(\$argv[1], json_encode([['status' => 'pass']]));\n";
 
-        $outcome = (new ProcessRunner())->run($source);
+        $outcome = (new ProcessRunner(timeoutSeconds: 5))->run($source);
 
         Assert::same($outcome->stdout, 'o');
         Assert::same($outcome->stderr, 'e');
@@ -205,20 +232,6 @@ final class ProcessRunnerTest
 
         Assert::false($outcome->timedOut);
         Assert::same($outcome->stdout, 'done');
-    }
-
-    /**
-     * The whole directory rather than a `doc-exec-*` glob: Windows'
-     * `tempnam()` keeps only the first three characters of the prefix, so a
-     * glob on the full prefix would match nothing and pass vacuously.
-     *
-     * @return list<string>
-     */
-    private function tempDirectoryListing(): array
-    {
-        $entries = scandir(sys_get_temp_dir());
-
-        return $entries === false ? [] : array_values($entries);
     }
 
     private function scriptReporting(string $phpArrayLiteral): string
