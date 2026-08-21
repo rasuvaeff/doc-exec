@@ -29,7 +29,7 @@ final readonly class StatementSplitterBench
         calls: 10_000,
         iterations: 10,
     )]
-    public static function tokenizerSplit(string $code): array
+    public static function parserSplit(string $code): array
     {
         return (new StatementSplitter())->split($code);
     }
