@@ -121,20 +121,20 @@ final class ProcessRunnerTest
 
     public function noTemporaryFileSurvivesTheRun(): void
     {
-        $before = glob(sys_get_temp_dir() . '/doc-exec-*');
+        $before = $this->tempDirectoryListing();
 
         (new ProcessRunner())->run($this->scriptReporting("[['status' => 'pass']]"));
 
-        Assert::same(glob(sys_get_temp_dir() . '/doc-exec-*'), $before);
+        Assert::same($this->tempDirectoryListing(), $before);
     }
 
     public function theResultsFileIsRemovedEvenWhenTheChildIsKilled(): void
     {
-        $before = glob(sys_get_temp_dir() . '/doc-exec-*');
+        $before = $this->tempDirectoryListing();
 
         (new ProcessRunner(timeoutSeconds: 1))->run("<?php\nwhile (true) {}\n");
 
-        Assert::same(glob(sys_get_temp_dir() . '/doc-exec-*'), $before);
+        Assert::same($this->tempDirectoryListing(), $before);
     }
 
     public function anUnusablePhpBinaryIsReportedRatherThanSilentlyPassing(): void
@@ -205,6 +205,20 @@ final class ProcessRunnerTest
 
         Assert::false($outcome->timedOut);
         Assert::same($outcome->stdout, 'done');
+    }
+
+    /**
+     * The whole directory rather than a `doc-exec-*` glob: Windows'
+     * `tempnam()` keeps only the first three characters of the prefix, so a
+     * glob on the full prefix would match nothing and pass vacuously.
+     *
+     * @return list<string>
+     */
+    private function tempDirectoryListing(): array
+    {
+        $entries = scandir(sys_get_temp_dir());
+
+        return $entries === false ? [] : array_values($entries);
     }
 
     private function scriptReporting(string $phpArrayLiteral): string
