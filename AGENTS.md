@@ -21,8 +21,9 @@ plain code examples into assertions. CLI entry point is `bin/doc-exec`
    the process running doc-exec.** `Execution\ScriptBuilder` generates one
    self-contained PHP source file per scope group (blocks sharing a Markdown
    heading); `Execution\ProcessRunner` always executes it via `proc_open`
-   in a fresh `php` child process, with results returned over a dedicated
-   pipe (`php://fd/3`) so they never mix with a block's own stdout. Every
+   in a fresh `php` child process, with results returned through a
+   temporary file whose path is passed as `argv[1]` so they never mix with a
+   block's own stdout. Every
    individual statement is wrapped in its own `try`/`catch` inside the
    generated script — collapsing that into one `try`/`catch` around the
    whole block breaks per-statement markers (a `// throws` earlier in the
@@ -102,13 +103,20 @@ make release-check
   `--timeout=`/`DocExec(timeoutSeconds:)`). A `stream_select` timeout is an
   event, not something to ignore: without it a documentation block containing
   an infinite loop wedges the runner forever, which for a CI gate is worse
-  than failing. Result rows arriving on fd 3 are narrowed to strings on
-  arrival, so nothing downstream re-checks them.
-- **`ProcessRunner` uses non-blocking `stream_select` across three pipes**
-  (stdout, stderr, and the fd-3 results channel), not sequential blocking
-  reads — a child process writing enough to fill an OS pipe buffer on a
-  stream the parent hasn't started draining yet would otherwise deadlock.
-  Keep it that way if you touch process I/O.
+  than failing. Result rows are narrowed to strings as they are read, so
+  nothing downstream re-checks them.
+- **Results come back through a file, not a file descriptor.** The original
+  design used a dedicated `php://fd/3` pipe; PHP's own manual states that on
+  Windows a child process has no way to reach descriptors above 2, which
+  made the package silently POSIX-only — every block would have been reported
+  as a process failure. The path is handed over as `argv[1]`. Do not move it
+  back to a descriptor, and do not move it to stdout: keeping it out of the
+  document's own output is the point.
+- **`ProcessRunner` uses non-blocking `stream_select` across both pipes**
+  (stdout and stderr), not sequential blocking reads — a child process
+  writing enough to fill an OS pipe buffer on a stream the parent hasn't
+  started draining yet would otherwise deadlock. Keep it that way if you
+  touch process I/O.
 - **`examples/` is a Markdown document by design.** For a doctest tool the
   public artifact is the document it checks: `examples/sample.md` is executed
   by `composer docs` on every build, so it cannot go stale.

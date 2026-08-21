@@ -132,11 +132,19 @@ final class ArgumentsTest
         Assert::string($usage)->contains('--help');
     }
 
-    public function aTrailingSlashOnTheWorkingDirectoryDoesNotDoubleUp(): void
+    #[DataProvider('workingDirectorySuffixProvider')]
+    public function aTrailingSeparatorOnTheWorkingDirectoryDoesNotDoubleUp(string $suffix): void
     {
-        $arguments = Arguments::parse([], $this->directory . '/');
+        $arguments = Arguments::parse([], $this->directory . $suffix);
 
         Assert::same($arguments->files, [$this->directory . '/README.md']);
+    }
+
+    public static function workingDirectorySuffixProvider(): iterable
+    {
+        yield 'none' => [''];
+        yield 'forward slash' => ['/'];
+        yield 'backslash' => ['\\'];
     }
 
     #[DataProvider('rejectedTimeoutProvider')]

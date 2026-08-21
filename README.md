@@ -168,10 +168,10 @@ echo "done"; // outputs done
 - The child process is bounded by wall-clock time, not by memory or
   filesystem access: a block still runs with the full permissions of the user
   running doc-exec.
-- The generated script is written to a temporary file created with
-  `tempnam()` (mode 0600, exclusive) and executed with the array form of
-  `proc_open` — no shell is involved at any point — and the file is removed
-  even if the run throws.
+- The generated script and the results it reports are written to temporary
+  files created with `tempnam()` (mode 0600, exclusive), executed with the
+  array form of `proc_open` — no shell is involved at any point — and both
+  files are removed even if the run throws.
 
 ## Examples
 

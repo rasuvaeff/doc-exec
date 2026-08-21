@@ -33,7 +33,8 @@ composer require --dev rasuvaeff/doc-exec
   the block; the other blocks of its scope group still run.
 - Every scope group runs in its own child `php` process (never `eval()`, never
   in-process) with `vendor/autoload.php` required automatically, under a
-  wall-clock deadline (30 s default).
+  wall-clock deadline (30 s default). Outcomes come back through a temporary
+  file, so the package works on Windows as well as POSIX systems.
 
 ## API
 

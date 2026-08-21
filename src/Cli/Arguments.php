@@ -60,7 +60,7 @@ final readonly class Arguments
         }
 
         if ($files === []) {
-            $files = [self::readableFile(rtrim($workingDirectory, '/') . '/README.md', 'document')];
+            $files = [self::readableFile(rtrim($workingDirectory, '/\\') . '/README.md', 'document')];
         }
 
         return new self(files: $files, bootstrap: $bootstrap, timeoutSeconds: $timeoutSeconds, wantsHelp: false);
