@@ -9,8 +9,9 @@ use RuntimeException;
 /**
  * Runs a generated script in its own `php` child process — never in the
  * process running doc-exec itself, and never through `eval()`. Per-statement
- * outcomes travel back over a dedicated pipe (file descriptor 3), keeping
- * them separate from anything the doc's own code writes to real stdout.
+ * outcomes come back through a temporary file whose path is handed to the
+ * child as `argv[1]`, keeping them separate from anything the doc's own code
+ * writes to real stdout.
  *
  * The child is bounded by a wall-clock deadline: a documentation block that
  * loops forever or blocks on a read is killed and reported, because a CI
@@ -35,21 +36,28 @@ final readonly class ProcessRunner
     public function run(string $source): ProcessOutcome
     {
         $scriptFile = tempnam(sys_get_temp_dir(), 'doc-exec-');
+        $resultsFile = $scriptFile === false ? false : tempnam(sys_get_temp_dir(), 'doc-exec-results-');
 
-        if ($scriptFile === false) {
+        if ($scriptFile === false || $resultsFile === false) {
+            if (\is_string($scriptFile)) {
+                unlink($scriptFile);
+            }
+
             throw new RuntimeException('Unable to create a temporary script file');
         }
 
         try {
-            return $this->runScriptFile($scriptFile, $source);
+            return $this->runScriptFile($scriptFile, $resultsFile, $source);
         } finally {
-            // Even on an exception the file holds the document's own code:
-            // leaving it in the temp directory is both litter and a leak.
+            // Even on an exception these hold the document's own code and its
+            // outcomes: leaving them in the temp directory is both litter and
+            // a leak.
             unlink($scriptFile);
+            unlink($resultsFile);
         }
     }
 
-    private function runScriptFile(string $scriptFile, string $source): ProcessOutcome
+    private function runScriptFile(string $scriptFile, string $resultsFile, string $source): ProcessOutcome
     {
         $written = file_put_contents($scriptFile, $source);
 
@@ -61,10 +69,9 @@ final readonly class ProcessRunner
             0 => ['pipe', 'r'],
             1 => ['pipe', 'w'],
             2 => ['pipe', 'w'],
-            3 => ['pipe', 'w'],
         ];
 
-        $process = @proc_open([$this->phpBinary, $scriptFile], $descriptors, $pipes);
+        $process = @proc_open([$this->phpBinary, $scriptFile, $resultsFile], $descriptors, $pipes);
 
         if (!\is_resource($process)) {
             throw new RuntimeException('Unable to spawn a PHP process for doc-exec execution');
@@ -79,15 +86,15 @@ final readonly class ProcessRunner
             exitCode: $exitCode,
             stdout: $buffers[1],
             stderr: $buffers[2],
-            results: $this->decodeResults($buffers[3]),
+            results: $this->decodeResults((string) file_get_contents($resultsFile)),
             timedOut: $timedOut,
         );
     }
 
     /**
-     * The results channel is written by generated code as a JSON array of
-     * per-slot rows. Anything else — a JSON object, a scalar, truncated
-     * output from a killed child — is treated as no results at all, which
+     * The results file is written by generated code as a JSON array of
+     * per-slot rows. Anything else — a JSON object, a scalar, an empty file
+     * left by a killed child — is treated as no results at all, which
      * reports the run as a process failure with its diagnostic.
      *
      * Rows are child-process output, so they are narrowed here rather than
@@ -148,8 +155,8 @@ final readonly class ProcessRunner
     private function drain($process, array $pipes): array
     {
         /** @var array<int, resource> $open */
-        $open = [1 => $pipes[1], 2 => $pipes[2], 3 => $pipes[3]];
-        $buffers = [1 => '', 2 => '', 3 => ''];
+        $open = [1 => $pipes[1], 2 => $pipes[2]];
+        $buffers = [1 => '', 2 => ''];
         $deadline = hrtime(as_number: true) + $this->timeoutSeconds * 1_000_000_000;
         $timedOut = false;
 

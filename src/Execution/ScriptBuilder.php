@@ -84,12 +84,17 @@ final readonly class ScriptBuilder
         }
 
         $source = "<?php\n\ndeclare(strict_types=1);\n\n"
+            // The results path arrives as argv[1] rather than over a file
+            // descriptor: descriptors above 2 cannot be read by a child
+            // process on Windows, and a doctest runner has no business being
+            // POSIX-only. The file keeps outcomes out of the document's own
+            // stdout just as fd 3 did, and is not bounded by a pipe buffer.
+            . "\$__docexec_results_file = \$argv[1];\n"
             . 'require_once ' . $this->literal($bootstrap) . ";\n\n"
             . "\$__docexec_results = [];\n\n"
             . implode("\n", $body)
-            . "\n\$__docexec_fp = fopen('php://fd/3', 'w');\n"
-            . "fwrite(\$__docexec_fp, json_encode(\$__docexec_results, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));\n"
-            . "fclose(\$__docexec_fp);\n";
+            . "\nfile_put_contents(\$__docexec_results_file, "
+            . "json_encode(\$__docexec_results, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));\n";
 
         return new GeneratedScript(source: $source, slots: $slots, blockFailures: $blockFailures);
     }

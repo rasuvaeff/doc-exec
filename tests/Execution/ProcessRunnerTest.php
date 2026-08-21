@@ -34,10 +34,20 @@ final class ProcessRunnerTest
         Assert::same($outcome->results, [['status' => 'pass'], ['status' => 'skip']]);
     }
 
+    public function theChildIsHandedAWritableResultsPathAsItsFirstArgument(): void
+    {
+        $outcome = (new ProcessRunner())->run(
+            "<?php\nfile_put_contents(\$argv[1], json_encode([['status' => 'pass', 'note' => \$argv[1]]]));\n",
+        );
+
+        Assert::same(\count((array) $outcome->results), 1);
+        Assert::string((string) ($outcome->results[0]['note'] ?? ''))->contains('doc-exec-results-');
+    }
+
     public function keepsResultsSeparateFromWhatTheDocumentPrints(): void
     {
         $source = "<?php\necho 'printed by the doc';\n"
-            . "\$fp = fopen('php://fd/3', 'w');\nfwrite(\$fp, json_encode([['status' => 'pass']]));\nfclose(\$fp);\n";
+            . "file_put_contents(\$argv[1], json_encode([['status' => 'pass']]));\n";
 
         $outcome = (new ProcessRunner())->run($source);
 
@@ -56,7 +66,7 @@ final class ProcessRunnerTest
 
     public function truncatedJsonOnTheResultsChannelIsNotAcceptedAsResults(): void
     {
-        $source = "<?php\n\$fp = fopen('php://fd/3', 'w');\nfwrite(\$fp, '[{\"status\":');\nfclose(\$fp);\n";
+        $source = "<?php\nfile_put_contents(\$argv[1], '[{\"status\":');\n";
 
         Assert::null((new ProcessRunner())->run($source)->results);
     }
@@ -109,11 +119,20 @@ final class ProcessRunnerTest
         Assert::false($outcome->timedOut);
     }
 
-    public function noTemporaryScriptSurvivesTheRun(): void
+    public function noTemporaryFileSurvivesTheRun(): void
     {
         $before = glob(sys_get_temp_dir() . '/doc-exec-*');
 
-        (new ProcessRunner())->run("<?php\necho 1;\n");
+        (new ProcessRunner())->run($this->scriptReporting("[['status' => 'pass']]"));
+
+        Assert::same(glob(sys_get_temp_dir() . '/doc-exec-*'), $before);
+    }
+
+    public function theResultsFileIsRemovedEvenWhenTheChildIsKilled(): void
+    {
+        $before = glob(sys_get_temp_dir() . '/doc-exec-*');
+
+        (new ProcessRunner(timeoutSeconds: 1))->run("<?php\nwhile (true) {}\n");
 
         Assert::same(glob(sys_get_temp_dir() . '/doc-exec-*'), $before);
     }
@@ -151,10 +170,10 @@ final class ProcessRunnerTest
 
     public function everyStreamIsDrainedNotJustTheFirstOneReady(): void
     {
-        // Dropping any one of the three pipes from the loop loses either the
-        // document's output, its diagnostics, or the results themselves.
+        // Dropping either pipe from the loop loses the document's output or
+        // its diagnostics.
         $source = "<?php\nfwrite(STDOUT, 'o');\nfwrite(STDERR, 'e');\n"
-            . "\$fp = fopen('php://fd/3', 'w');\nfwrite(\$fp, json_encode([['status' => 'pass']]));\nfclose(\$fp);\n";
+            . "file_put_contents(\$argv[1], json_encode([['status' => 'pass']]));\n";
 
         $outcome = (new ProcessRunner())->run($source);
 
@@ -190,7 +209,6 @@ final class ProcessRunnerTest
 
     private function scriptReporting(string $phpArrayLiteral): string
     {
-        return "<?php\n\$fp = fopen('php://fd/3', 'w');\n"
-            . "fwrite(\$fp, json_encode({$phpArrayLiteral}));\nfclose(\$fp);\n";
+        return "<?php\nfile_put_contents(\$argv[1], json_encode({$phpArrayLiteral}));\n";
     }
 }

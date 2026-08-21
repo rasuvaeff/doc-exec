@@ -139,12 +139,15 @@ final class ScriptBuilderTest
         Assert::same(substr_count($script->source, 'require_once'), 1);
     }
 
-    public function theResultsChannelIsWrittenAsAJsonListOnDescriptorThree(): void
+    public function theResultsAreWrittenAsAJsonListToThePathGivenAsTheFirstArgument(): void
     {
+        // Not a file descriptor above 2: Windows cannot expose those to a
+        // child process, which would make the whole package POSIX-only.
         $script = $this->build('$a = 1;');
 
-        Assert::string($script->source)->contains("fopen('php://fd/3', 'w')");
-        Assert::string($script->source)->contains('json_encode($__docexec_results');
+        Assert::string($script->source)->contains('$__docexec_results_file = $argv[1];');
+        Assert::string($script->source)->contains('file_put_contents($__docexec_results_file, json_encode($__docexec_results');
+        Assert::string($script->source)->notContains('php://fd/3');
     }
 
     public function anEmptyBlockProducesNoSlotsAndNoFailures(): void
@@ -171,9 +174,8 @@ final class ScriptBuilderTest
         Assert::string($script->source)->contains("\$__docexec_results = [];\n\n");
         Assert::true(str_ends_with(
             $script->source,
-            "\n\$__docexec_fp = fopen('php://fd/3', 'w');\n"
-            . "fwrite(\$__docexec_fp, json_encode(\$__docexec_results, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));\n"
-            . "fclose(\$__docexec_fp);\n",
+            "\nfile_put_contents(\$__docexec_results_file, "
+            . "json_encode(\$__docexec_results, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));\n",
         ));
     }
 

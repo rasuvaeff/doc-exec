@@ -22,7 +22,9 @@ final readonly class AutoloadFinder
      */
     public function find(string $startDir): ?string
     {
-        $dir = rtrim($startDir, '/');
+        // Both separators: on Windows a directory may well arrive as
+        // "C:\project\docs\".
+        $dir = rtrim($startDir, '/\\');
 
         if ($dir === '') {
             $dir = '/';

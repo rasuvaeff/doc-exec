@@ -450,16 +450,18 @@ final class DocExecTest
 
     public function aStatementWithNoReportedResultFailsRatherThanPasses(): void
     {
-        // The child died halfway: slots without a row must not read as passes.
+        // The document truncates the results file on its way out, so the slot
+        // exists but its row never arrives. A missing row must read as a
+        // failure, never as a silent pass.
         $result = $this->check(<<<'MD'
             ```php doc-exec
-            echo "first";
-            posix_kill(posix_getpid(), 9);
-            echo "never";
+            register_shutdown_function(static fn() => file_put_contents($argv[1], '[]'));
+            1 + 1; // => 2
             ```
             MD);
 
         Assert::false($result->passed());
+        Assert::string((string) $result->blocks[0]->statements[0]->message)->contains('no result reported');
     }
 
     #[Property(runs: 120, timeoutMs: 20_000)]

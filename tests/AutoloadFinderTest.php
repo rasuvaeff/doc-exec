@@ -7,6 +7,7 @@ namespace Rasuvaeff\DocExec\Tests;
 use Rasuvaeff\DocExec\AutoloadFinder;
 use Testo\Assert;
 use Testo\Codecov\Covers;
+use Testo\Data\DataProvider;
 use Testo\Lifecycle\AfterTest;
 use Testo\Lifecycle\BeforeTest;
 use Testo\Test;
@@ -77,9 +78,17 @@ final class AutoloadFinderTest
         Assert::null((new AutoloadFinder())->find($this->root . '/sibling/docs'));
     }
 
-    public function aTrailingSlashOnTheStartDirectoryIsHandled(): void
+    #[DataProvider('startDirectorySuffixProvider')]
+    public function aTrailingSeparatorOnTheStartDirectoryIsHandled(string $suffix): void
     {
-        Assert::same((new AutoloadFinder())->find($this->root . '/'), $this->root . '/vendor/autoload.php');
+        Assert::same((new AutoloadFinder())->find($this->root . $suffix), $this->root . '/vendor/autoload.php');
+    }
+
+    public static function startDirectorySuffixProvider(): iterable
+    {
+        yield 'none' => [''];
+        yield 'forward slash' => ['/'];
+        yield 'backslash' => ['\\'];
     }
 
     public function aGitDirectoryAlsoMarksTheProjectBoundary(): void
