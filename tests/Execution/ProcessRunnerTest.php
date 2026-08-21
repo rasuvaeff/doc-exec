@@ -125,6 +125,18 @@ final class ProcessRunnerTest
         (new ProcessRunner(phpBinary: '/nonexistent/php', timeoutSeconds: 5))->run("<?php\n");
     }
 
+    public function nonStringFieldsInAResultRowAreDroppedRatherThanTrusted(): void
+    {
+        // The rows come from a child process running the document's own code:
+        // narrowing them here is what lets the rest of the package read the
+        // shape without re-checking every field.
+        $outcome = (new ProcessRunner())->run(
+            $this->scriptReporting("[['status' => 'pass', 'output' => 42, 'note' => null, 'extra' => 'x']]"),
+        );
+
+        Assert::same($outcome->results, [['status' => 'pass']]);
+    }
+
     private function scriptReporting(string $phpArrayLiteral): string
     {
         return "<?php\n\$fp = fopen('php://fd/3', 'w');\n"

@@ -17,6 +17,9 @@ namespace Rasuvaeff\DocExec;
  */
 final readonly class AutoloadFinder
 {
+    /**
+     * @return non-empty-string|null
+     */
     public function find(string $startDir): ?string
     {
         $dir = rtrim($startDir, '/');

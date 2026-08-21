@@ -14,7 +14,7 @@ namespace Rasuvaeff\DocExec\Cli;
 final readonly class Arguments
 {
     /**
-     * @param list<string> $files
+     * @param list<non-empty-string> $files
      * @param positive-int $timeoutSeconds
      */
     private function __construct(
@@ -32,6 +32,7 @@ final readonly class Arguments
     {
         $bootstrap = null;
         $timeoutSeconds = 30;
+        /** @var list<non-empty-string> $files */
         $files = [];
 
         foreach ($arguments as $argument) {
@@ -81,6 +82,7 @@ final readonly class Arguments
     }
 
     /**
+     * @return non-empty-string
      * @throws UsageError
      */
     private static function readableFile(string $path, string $what): string

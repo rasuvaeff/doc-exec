@@ -16,6 +16,8 @@ use RuntimeException;
  * loops forever or blocks on a read is killed and reported, because a CI
  * gate that wedges is worse than one that fails.
  *
+ * @psalm-import-type ResultRow from \Rasuvaeff\DocExec\Execution\ProcessOutcome
+ *
  * @internal
  */
 final readonly class ProcessRunner
@@ -88,7 +90,11 @@ final readonly class ProcessRunner
      * output from a killed child — is treated as no results at all, which
      * reports the run as a process failure with its diagnostic.
      *
-     * @return list<array<string, mixed>>|null
+     * Rows are child-process output, so they are narrowed here rather than
+     * asserted: fields that are not strings are dropped, and the rest of
+     * the package can then read the shape without re-checking it.
+     *
+     * @return list<ResultRow>|null
      */
     private function decodeResults(string $raw): ?array
     {
@@ -110,11 +116,31 @@ final readonly class ProcessRunner
                 return null;
             }
 
-            /** @var array<string, mixed> $row */
-            $rows[] = $row;
+            /** @var array<array-key, mixed> $row */
+            $rows[] = $this->normalizeRow($row);
         }
 
         return $rows;
+    }
+
+    /**
+     * @param array<array-key, mixed> $row
+     * @return ResultRow
+     */
+    private function normalizeRow(array $row): array
+    {
+        $normalized = [];
+
+        foreach (['status', 'note', 'exception', 'actual', 'expected', 'output'] as $key) {
+            /** @var mixed $value */
+            $value = $row[$key] ?? null;
+
+            if (\is_string($value)) {
+                $normalized[$key] = $value;
+            }
+        }
+
+        return $normalized;
     }
 
     /**

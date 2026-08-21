@@ -26,6 +26,7 @@ final readonly class MarkdownExtractor
     ) {}
 
     /**
+     * @param non-empty-string $file
      * @return list<CodeBlock>
      */
     public function extract(string $markdown, string $file): array
@@ -33,6 +34,7 @@ final readonly class MarkdownExtractor
         $lines = explode("\n", $markdown);
         $blocks = [];
         $scopeKey = '';
+        /** @var int<0, max> $ordinal */
         $ordinal = 0;
 
         $inFence = false;
@@ -40,7 +42,8 @@ final readonly class MarkdownExtractor
         $fenceLength = 0;
         $fenceIndent = 0;
         $fenceInfo = '';
-        $fenceStartLine = 0;
+        /** @var positive-int $fenceStartLine */
+        $fenceStartLine = 1;
         /** @var list<string> $fenceLines */
         $fenceLines = [];
         $previousLine = '';
@@ -106,6 +109,9 @@ final readonly class MarkdownExtractor
     }
 
     /**
+     * @param non-empty-string $file
+     * @param int<0, max> $ordinal
+     * @param positive-int $startLine
      * @param list<string> $fenceLines
      */
     private function makeBlock(
