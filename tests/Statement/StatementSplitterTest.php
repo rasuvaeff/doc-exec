@@ -215,6 +215,10 @@ final class StatementSplitterTest
         yield 'function import' => ['use function array_map;', StatementKind::Import];
         yield 'const import' => ['use const PHP_EOL;', StatementKind::Import];
         yield 'group import' => ['use Rasuvaeff\DocExec\{DocExec, StableId};', StatementKind::Import];
+        yield 'constant' => ["const DOC_EXEC_GREETING = 'hi';", StatementKind::Constant];
+        yield 'strict types declaration' => ['declare(strict_types=1);', StatementKind::FileDeclaration];
+        yield 'encoding declaration' => ["declare(encoding='UTF-8');", StatementKind::FileDeclaration];
+        yield 'ticks declaration' => ['declare(ticks=1);', StatementKind::Other];
         yield 'echo' => ['echo "x";', StatementKind::Other];
         yield 'if' => ['if (true) { $a = 1; }', StatementKind::Other];
         yield 'function declaration' => ['function f(): int { return 1; }', StatementKind::Other];

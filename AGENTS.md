@@ -6,7 +6,7 @@ Guidance for AI agents working on this package. Read before changing code.
 
 Doctest for PHP: `Rasuvaeff\DocExec\DocExec::check(string $path)` extracts
 `php doc-exec` fenced code blocks from a Markdown document, splits each block
-into top-level statements with the tokenizer, and runs them in a dedicated
+into top-level statements with `nikic/php-parser`, and runs them in a dedicated
 child `php` process — never `eval()`, never in the process running doc-exec
 itself. Trailing `//` marker comments (`=>`, `throws`, `outputs`, `skip`) turn
 plain code examples into assertions. CLI entry point is `bin/doc-exec`
@@ -100,23 +100,29 @@ make release-check
   `sha256(file + blockOrdinal + normalize(code))`. Do not make it tolerant of
   code edits; a changed example is a different example, not a continuation.
 - **`ProcessRunner` enforces a wall-clock deadline** (30 s default,
-  `--timeout=`/`DocExec(timeoutSeconds:)`). A `stream_select` timeout is an
-  event, not something to ignore: without it a documentation block containing
-  an infinite loop wedges the runner forever, which for a CI gate is worse
-  than failing. Result rows are narrowed to strings as they are read, so
-  nothing downstream re-checks them.
-- **Results come back through a file, not a file descriptor.** The original
-  design used a dedicated `php://fd/3` pipe; PHP's own manual states that on
-  Windows a child process has no way to reach descriptors above 2, which
-  made the package silently POSIX-only — every block would have been reported
-  as a process failure. The path is handed over as `argv[1]`. Do not move it
-  back to a descriptor, and do not move it to stdout: keeping it out of the
-  document's own output is the point.
-- **`ProcessRunner` uses non-blocking `stream_select` across both pipes**
-  (stdout and stderr), not sequential blocking reads — a child process
-  writing enough to fill an OS pipe buffer on a stream the parent hasn't
-  started draining yet would otherwise deadlock. Keep it that way if you
-  touch process I/O.
+  `--timeout=`/`DocExec(timeoutSeconds:)`), enforced by polling
+  `proc_get_status()`: without it a documentation block containing an infinite
+  loop wedges the runner forever, which for a CI gate is worse than failing.
+  Result rows are narrowed to strings as they are read, so nothing downstream
+  re-checks them.
+- **Nothing about the child process uses a pipe.** stdin, stdout, stderr and
+  the results channel are all files. Two separate incidents put it there, and
+  both come back the moment someone reintroduces a pipe:
+  - the results channel was once `php://fd/3`, and PHP's manual states that on
+    Windows a child cannot reach descriptors above 2 — the package was
+    silently POSIX-only, every block reporting as a process failure. The path
+    is handed over as `argv[1]` instead;
+  - stdout/stderr were once pipes drained with `stream_select()`, which does
+    not report readiness for pipes on Windows: the first Windows CI run sat
+    for over an hour, every child running to its full deadline. The same call
+    also returns `false` when a signal interrupts it, which used to break the
+    drain loop and leave the deadline unenforced.
+
+  Reading files after the child exits costs nothing here — output is never
+  consumed while the process runs — and removes the pipe-buffer deadlock as a
+  category. Do not move any of these back to a pipe, and do not merge the
+  results channel into stdout: keeping outcomes out of the document's own
+  output is the point.
 - **`examples/` is a Markdown document by design.** For a doctest tool the
   public artifact is the document it checks: `examples/sample.md` is executed
   by `composer docs` on every build, so it cannot go stale.
@@ -167,10 +173,10 @@ make release-check
 
 ## Mutation testing
 
-`make mutation` runs Infection with `minMsi: 87`, measured rather than picked:
-558 mutants, 433 killed by the suite, 59 killed by timeout, 66 escaped.
+`make mutation` runs Infection with `minMsi: 89`, measured rather than picked:
+545 mutants, 491 killed by the suite, 1 by timeout, 53 escaped, **0 skipped**.
 
-Two things about that number are worth knowing before you change it:
+Three things about that number are worth knowing before you change it:
 
 - **Testo maps mutants to tests by the `#[Covers]` attribute, not by what the
   test actually executes.** Until `tests/Execution/` existed, every mutant in
@@ -178,13 +184,20 @@ Two things about that number are worth knowing before you change it:
   exercised that code end to end, and the reported MSI was computed over a
   pool that silently excluded them. If you add a class, add a test class with
   its `#[Covers]`, or its mutants join the same blind spot.
-- **The 59 timeout kills are real kills, not noise.** Mutating the drain loop
-  or the deadline arithmetic in `ProcessRunner` makes the child never finish,
-  which is precisely the failure the deadline exists to catch.
+- **`timeout: 90` in `infection.json5` is load-bearing.** The suite contains
+  real wall-clock waits — a block that never finishes has to actually outlive
+  its budget — so under the default 10 seconds 77 mutants came back *skipped*
+  rather than killed. Skipped mutants leave the denominator, so the MSI stayed
+  respectable while an eighth of the pool went unchecked. Keep the per-mutant
+  limit above the suite's slowest covering test, and treat any non-zero
+  `Skipped` count as a broken gate rather than a detail.
+- Tests construct `DocExec`/`ProcessRunner` with an explicit small
+  `timeoutSeconds` instead of the 30-second default, so a mutant that breaks
+  the deadline dies quickly instead of dragging the whole run.
 
-The 66 that escape are dominated by mutations that cannot change behaviour:
-`fread()`'s 65536-byte chunk size and the poll interval shifted by one, `+`/`-`
-one inside regex quantifiers that still match the same language, and the order
-in which the three pipes are drained. Do not silence them with an ignore list —
-they are visible on purpose, and an ignore entry would also hide a future
-mutation at the same line that does matter.
+The 53 that escape are dominated by mutations that cannot change behaviour:
+the poll interval used while waiting for the child shifted by one, `+`/`-` one
+inside regex quantifiers that still match the same language, and concatenation
+order in strings that are compared as a whole. Do not silence them with an
+ignore list — they are visible on purpose, and an ignore entry would also hide
+a future mutation at the same line that does matter.

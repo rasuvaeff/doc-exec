@@ -135,14 +135,24 @@ final class MarkerParserTest
         yield 'outputs multiline' => ["outputs first\nsecond", MarkerType::Outputs];
     }
 
-    public function throwsWithoutAClassNameIsNotAMarker(): void
+    #[DataProvider('bareKeywordProvider')]
+    public function aMarkerKeywordWithNoPayloadIsInvalidRatherThanProse(string $comment, string $expectedError): void
     {
-        Assert::same((new MarkerParser())->parse('throws')->type, MarkerType::None);
+        // Falling back to "not a marker" would fail open: the statement would
+        // run with no assertion while its block still reported PASS.
+        $marker = (new MarkerParser())->parse($comment);
+
+        Assert::same($marker->type, MarkerType::Invalid);
+        Assert::string((string) $marker->error)->contains($expectedError);
     }
 
-    public function outputsWithoutTextIsNotAMarker(): void
+    public static function bareKeywordProvider(): iterable
     {
-        Assert::same((new MarkerParser())->parse('outputs')->type, MarkerType::None);
+        yield 'bare arrow' => ['=>', 'needs an expression'];
+        yield 'bare throws' => ['throws', 'needs an exception class name'];
+        yield 'bare throws padded' => ['throws   ', 'needs an exception class name'];
+        yield 'bare outputs' => ['outputs', 'needs the expected output'];
+        yield 'bare outputs padded' => ['outputs  ', 'needs the expected output'];
     }
 
     public function surroundingWhitespaceIsIgnored(): void

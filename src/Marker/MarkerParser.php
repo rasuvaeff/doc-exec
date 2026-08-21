@@ -15,9 +15,10 @@ namespace Rasuvaeff\DocExec\Marker;
  * is prose and stays executable. A lenient `skip <anything>` rule fails open
  * — the statement silently never runs while its block still reports PASS.
  *
- * A marker whose payload is empty (`// =>`) parses as
- * {@see MarkerType::Invalid} rather than being passed on to become a syntax
- * error inside the generated script.
+ * A marker keyword with no payload — `// =>`, `// throws`, `// outputs` —
+ * parses as {@see MarkerType::Invalid}. Falling back to "not a marker" there
+ * would fail open in the same way the lenient `skip` rule did: the statement
+ * would run with no assertion at all and its block would still report PASS.
  *
  * @internal
  */
@@ -43,8 +44,16 @@ final readonly class MarkerParser
             return ParsedMarker::throws($matches[1], isset($matches[2]) ? trim($matches[2]) : null);
         }
 
+        if (preg_match('/^throws\s*$/', $comment) === 1) {
+            return ParsedMarker::invalid('the `// throws` marker needs an exception class name');
+        }
+
         if (preg_match('/^outputs\s+(.+)$/s', $comment, $matches) === 1) {
             return ParsedMarker::outputs($matches[1]);
+        }
+
+        if (preg_match('/^outputs\s*$/', $comment) === 1) {
+            return ParsedMarker::invalid('the `// outputs` marker needs the expected output');
         }
 
         if ($comment === 'skip') {

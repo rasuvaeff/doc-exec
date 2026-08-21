@@ -8,12 +8,21 @@ $autoloadCandidates = [
     __DIR__ . '/../../../autoload.php',
 ];
 
+$autoloaded = false;
+
 foreach ($autoloadCandidates as $candidate) {
     if (is_file($candidate)) {
         require $candidate;
+        $autoloaded = true;
 
         break;
     }
+}
+
+if (!$autoloaded) {
+    fwrite(\STDERR, "doc-exec: unable to locate the Composer autoloader; run \"composer install\" first\n");
+
+    exit(2);
 }
 
 use Rasuvaeff\DocExec\Cli\Arguments;
