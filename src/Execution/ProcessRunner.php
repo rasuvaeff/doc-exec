@@ -12,12 +12,22 @@ use RuntimeException;
  * outcomes travel back over a dedicated pipe (file descriptor 3), keeping
  * them separate from anything the doc's own code writes to real stdout.
  *
+ * The child is bounded by a wall-clock deadline: a documentation block that
+ * loops forever or blocks on a read is killed and reported, because a CI
+ * gate that wedges is worse than one that fails.
+ *
  * @internal
  */
 final readonly class ProcessRunner
 {
+    private const int POLL_MICROSECONDS = 200_000;
+
+    /**
+     * @param positive-int $timeoutSeconds wall-clock budget for one scope group
+     */
     public function __construct(
         private string $phpBinary = \PHP_BINARY,
+        private int $timeoutSeconds = 30,
     ) {}
 
     public function run(string $source): ProcessOutcome
@@ -28,7 +38,22 @@ final readonly class ProcessRunner
             throw new RuntimeException('Unable to create a temporary script file');
         }
 
-        file_put_contents($scriptFile, $source);
+        try {
+            return $this->runScriptFile($scriptFile, $source);
+        } finally {
+            // Even on an exception the file holds the document's own code:
+            // leaving it in the temp directory is both litter and a leak.
+            unlink($scriptFile);
+        }
+    }
+
+    private function runScriptFile(string $scriptFile, string $source): ProcessOutcome
+    {
+        $written = file_put_contents($scriptFile, $source);
+
+        if ($written !== \strlen($source)) {
+            throw new RuntimeException(\sprintf('Unable to write the generated script to "%s"', $scriptFile));
+        }
 
         $descriptors = [
             0 => ['pipe', 'r'],
@@ -37,62 +62,90 @@ final readonly class ProcessRunner
             3 => ['pipe', 'w'],
         ];
 
-        $process = proc_open([$this->phpBinary, $scriptFile], $descriptors, $pipes);
+        $process = @proc_open([$this->phpBinary, $scriptFile], $descriptors, $pipes);
 
         if (!\is_resource($process)) {
-            unlink($scriptFile);
-
             throw new RuntimeException('Unable to spawn a PHP process for doc-exec execution');
         }
 
         /** @var array<int, resource> $pipes */
         fclose($pipes[0]);
 
-        [$buffers, $exitCode] = $this->drain($process, $pipes);
-
-        unlink($scriptFile);
-
-        $results = null;
-        $resultsRaw = $buffers[3];
-
-        if ($resultsRaw !== '') {
-            /** @var mixed $decoded */
-            $decoded = json_decode($resultsRaw, true);
-
-            if (\is_array($decoded)) {
-                /** @var array<int|string, array<string, mixed>> $decoded */
-                $results = $decoded;
-            }
-        }
+        [$buffers, $exitCode, $timedOut] = $this->drain($process, $pipes);
 
         return new ProcessOutcome(
             exitCode: $exitCode,
             stdout: $buffers[1],
             stderr: $buffers[2],
-            results: $results,
+            results: $this->decodeResults($buffers[3]),
+            timedOut: $timedOut,
         );
+    }
+
+    /**
+     * The results channel is written by generated code as a JSON array of
+     * per-slot rows. Anything else — a JSON object, a scalar, truncated
+     * output from a killed child — is treated as no results at all, which
+     * reports the run as a process failure with its diagnostic.
+     *
+     * @return list<array<string, mixed>>|null
+     */
+    private function decodeResults(string $raw): ?array
+    {
+        if ($raw === '') {
+            return null;
+        }
+
+        /** @var mixed $decoded */
+        $decoded = json_decode($raw, true);
+
+        if (!\is_array($decoded) || !array_is_list($decoded)) {
+            return null;
+        }
+
+        $rows = [];
+
+        foreach ($decoded as $row) {
+            if (!\is_array($row)) {
+                return null;
+            }
+
+            /** @var array<string, mixed> $row */
+            $rows[] = $row;
+        }
+
+        return $rows;
     }
 
     /**
      * @param resource $process
      * @param array<int, resource> $pipes
-     * @return array{0: array<int, string>, 1: int}
+     * @return array{0: array<int, string>, 1: int, 2: bool} [buffers, exit code, timed out]
      */
     private function drain($process, array $pipes): array
     {
         /** @var array<int, resource> $open */
         $open = [1 => $pipes[1], 2 => $pipes[2], 3 => $pipes[3]];
         $buffers = [1 => '', 2 => '', 3 => ''];
+        $deadline = hrtime(true) + $this->timeoutSeconds * 1_000_000_000;
+        $timedOut = false;
 
         foreach ($open as $pipe) {
             stream_set_blocking($pipe, false);
         }
 
         while ($open !== []) {
+            if (hrtime(true) > $deadline) {
+                $timedOut = true;
+                proc_terminate($process, 9);
+
+                break;
+            }
+
             $read = array_values($open);
             $write = null;
             $except = null;
-            $changed = @stream_select($read, $write, $except, 1);
+            $changed = @stream_select($read, $write, $except, 0, self::POLL_MICROSECONDS);
 
             if ($changed === false) {
                 break;
@@ -118,8 +171,12 @@ final readonly class ProcessRunner
             }
         }
 
+        foreach ($open as $pipe) {
+            fclose($pipe);
+        }
+
         $exitCode = proc_close($process);
 
-        return [$buffers, $exitCode];
+        return [$buffers, $exitCode, $timedOut];
     }
 }

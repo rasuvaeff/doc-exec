@@ -25,16 +25,20 @@ final readonly class DocExec
     private ProcessRunner $processRunner;
     private AutoloadFinder $autoloadFinder;
 
+    /**
+     * @param positive-int $timeoutSeconds wall-clock budget per scope group
+     */
     public function __construct(
         private ?string $bootstrap = null,
         ?MarkdownExtractor $extractor = null,
         ?ScriptBuilder $scriptBuilder = null,
         ?ProcessRunner $processRunner = null,
         ?AutoloadFinder $autoloadFinder = null,
+        int $timeoutSeconds = 30,
     ) {
         $this->extractor = $extractor ?? new MarkdownExtractor();
         $this->scriptBuilder = $scriptBuilder ?? new ScriptBuilder();
-        $this->processRunner = $processRunner ?? new ProcessRunner();
+        $this->processRunner = $processRunner ?? new ProcessRunner(timeoutSeconds: $timeoutSeconds);
         $this->autoloadFinder = $autoloadFinder ?? new AutoloadFinder();
     }
 
@@ -164,6 +168,7 @@ final readonly class DocExec
         // default display_errors, not stderr — checking stderr alone silently
         // swallows the one diagnostic a user needs to fix a broken example.
         $error = match (true) {
+            $outcome->timedOut => 'the block did not finish within the time budget and was killed',
             trim($outcome->stderr) !== '' => trim($outcome->stderr),
             trim($outcome->stdout) !== '' => trim($outcome->stdout),
             default => \sprintf('process exited with code %d without producing a result', $outcome->exitCode),
