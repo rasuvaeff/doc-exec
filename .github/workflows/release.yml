@@ -41,10 +41,21 @@ jobs:
         run: composer install --no-interaction --no-progress --prefer-dist
 
       # A tag is what Packagist publishes, so the gate runs here too rather
-      # than trusting that whoever tagged had run it. bc-check is included:
-      # it is a no-op until a previous tag exists.
+      # than trusting that whoever tagged had run it.
+      #
+      # `composer build` and `rector`, not `release-check`: the third part of
+      # that script is bc-check, and on a tag there is nothing to compare
+      # against — the newest tag is this one. Backward compatibility is
+      # checked on the pull request, against the previous tag, which is where
+      # the answer is meaningful. Running it here also walks straight into
+      # roave's SKIPPED-as-failure behaviour: an enum case used as a default
+      # in a promoted property (`Statement::$kind`) is reported as an
+      # unsupported expression and exits 3, failing a release for source that
+      # is perfectly compatible.
       - name: Verify the tagged commit
-        run: composer release-check
+        run: |
+          composer build
+          composer rector
 
       - name: Extract the changelog section for this tag
         env:
