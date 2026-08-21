@@ -313,6 +313,101 @@ final class DocExecTest
      *
      * @param list<bool> $include
      */
+    public function aBlockWritingOnlyToStderrReportsThatText(): void
+    {
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            fwrite(STDERR, "  stderr diagnostic  ");
+            exit(7);
+            ```
+            MD);
+
+        Assert::same($result->blocks[0]->processError, 'stderr diagnostic');
+    }
+
+    public function aBlockWritingOnlyToStdoutReportsThatText(): void
+    {
+        // PHP CLI puts fatal-error text on stdout under this SAPI, so stdout
+        // is the stream that actually carries the diagnostic most of the time.
+        // fwrite() rather than echo: echo lands in the per-statement output
+        // buffer, which is what makes a doc's own printing not look like an
+        // error in the first place.
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            fwrite(STDOUT, "  stdout diagnostic  ");
+            exit(7);
+            ```
+            MD);
+
+        Assert::same($result->blocks[0]->processError, 'stdout diagnostic');
+    }
+
+    public function stderrWinsOverStdoutWhenBothArePresent(): void
+    {
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            echo "from stdout";
+            fwrite(STDERR, "from stderr");
+            exit(7);
+            ```
+            MD);
+
+        Assert::same($result->blocks[0]->processError, 'from stderr');
+    }
+
+    public function whitespaceOnlyOnAStreamIsNotADiagnostic(): void
+    {
+        // Without trimming before the emptiness check, a stray newline on
+        // stderr would be reported as the failure message and hide the real
+        // one on stdout.
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            fwrite(STDERR, "   \n  ");
+            fwrite(STDOUT, "the real diagnostic");
+            exit(7);
+            ```
+            MD);
+
+        Assert::same($result->blocks[0]->processError, 'the real diagnostic');
+    }
+
+    public function aSilentDeathReportsTheExitCode(): void
+    {
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            exit(9);
+            ```
+            MD);
+
+        Assert::same($result->blocks[0]->processError, 'process exited with code 9 without producing a result');
+    }
+
+    public function aBlockThatNeverFinishesIsReportedAsATimeout(): void
+    {
+        $file = sys_get_temp_dir() . '/doc-exec-test-' . bin2hex(random_bytes(8)) . '.md';
+        file_put_contents($file, "```php doc-exec\nwhile (true) {}\n```\n");
+        $this->tempFiles[] = $file;
+
+        $result = (new DocExec(bootstrap: $this->bootstrap, timeoutSeconds: 1))->check($file);
+
+        Assert::false($result->passed());
+        Assert::same($result->blocks[0]->processError, 'the block did not finish within the time budget and was killed');
+    }
+
+    public function aStatementWithNoReportedResultFailsRatherThanPasses(): void
+    {
+        // The child died halfway: slots without a row must not read as passes.
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            echo "first";
+            posix_kill(posix_getpid(), 9);
+            echo "never";
+            ```
+            MD);
+
+        Assert::false($result->passed());
+    }
+
     #[Property(runs: 120, timeoutMs: 20_000)]
     public function docExecFindsExactlyTheStaleBlocks(array $include, bool $healthyOnly): void
     {
@@ -320,7 +415,7 @@ final class DocExecTest
         $selected = [];
 
         foreach ($catalog as $index => $entry) {
-            if ($include[$index] && !($healthyOnly && $entry['fail'])) {
+            if ($include[$index] && (!$healthyOnly || !$entry['fail'])) {
                 $selected[] = $index;
             }
         }
@@ -366,13 +461,13 @@ final class DocExecTest
         // reaching one of them and still report success.
         Classify::cover($expectedIds === [], 'all blocks green', 10.0);
         Classify::cover($expectedIds !== [], 'at least one stale block', 20.0);
-        Classify::cover(\in_array(15, $selected, true), 'a skipped statement', 15.0);
+        Classify::cover(\in_array(15, $selected, strict: true), 'a skipped statement', 15.0);
         Classify::cover(
-            \in_array(16, $selected, true) || \in_array(17, $selected, true),
+            \in_array(16, $selected, strict: true) || \in_array(17, $selected, strict: true),
             'an invalid marker',
             15.0,
         );
-        Classify::cover(\in_array(18, $selected, true), 'a block that does not parse', 15.0);
+        Classify::cover(\in_array(18, $selected, strict: true), 'a block that does not parse', 15.0);
         Classify::when(\count($expectedIds) > 3, 'many stale blocks');
 
         Assert::same($actualIds, $expectedIds);
@@ -404,8 +499,8 @@ final class DocExecTest
      */
     public static function docExecFindsExactlyTheStaleBlocksExamples(): iterable
     {
-        $all = array_fill(0, self::CATALOG_SIZE, true);
-        $none = array_fill(0, self::CATALOG_SIZE, false);
+        $all = array_fill(0, self::CATALOG_SIZE, value: true);
+        $none = array_fill(0, self::CATALOG_SIZE, value: false);
 
         yield 'every block included' => [$all, false];
 

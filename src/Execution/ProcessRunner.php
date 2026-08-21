@@ -132,11 +132,8 @@ final readonly class ProcessRunner
         $normalized = [];
 
         foreach (['status', 'note', 'exception', 'actual', 'expected', 'output'] as $key) {
-            /** @var mixed $value */
-            $value = $row[$key] ?? null;
-
-            if (\is_string($value)) {
-                $normalized[$key] = $value;
+            if (isset($row[$key]) && \is_string($row[$key])) {
+                $normalized[$key] = $row[$key];
             }
         }
 

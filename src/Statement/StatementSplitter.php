@@ -28,6 +28,12 @@ final readonly class StatementSplitter
 {
     private const string PREFIX = "<?php\n";
 
+    /**
+     * On its own line, so that it terminates the statement rather than
+     * landing inside a trailing `//` comment.
+     */
+    private const string TERMINATOR = "\n;";
+
     private Parser $parser;
 
     public function __construct(?Parser $parser = null)
@@ -53,16 +59,25 @@ final readonly class StatementSplitter
 
             $start = $node->getStartFilePos();
             $end = $node->getEndFilePos();
+            $isSynthetic = $appendedSemicolon && $end === $lastOffset;
+            $comment = $isSynthetic
+                ? $this->commentBefore($tokens, $node->getEndTokenPos())
+                : $this->trailingCommentToken($tokens, $node->getEndTokenPos(), $node->getEndLine());
             $text = substr($source, $start, $end - $start + 1);
 
-            if ($appendedSemicolon && $end === $lastOffset) {
-                $text = rtrim($text, ';');
+            if ($isSynthetic) {
+                // The synthetic terminator sits on a line of its own, after
+                // any trailing comment; both are cut back off so the
+                // statement keeps exactly the text the document had.
+                $text = $comment instanceof Token
+                    ? rtrim(substr($source, $start, $comment->pos - $start))
+                    : rtrim(substr($text, 0, -\strlen(self::TERMINATOR)));
             }
 
             $statements[] = new Statement(
                 code: $text,
                 line: max(1, $node->getStartLine() - 1),
-                trailingComment: $this->trailingComment($tokens, $node->getEndTokenPos(), $node->getEndLine()),
+                trailingComment: $comment instanceof Token ? $this->stripCommentSyntax($comment->text) : null,
                 kind: $this->kindOf($node),
             );
         }
@@ -86,7 +101,7 @@ final readonly class StatementSplitter
         try {
             return [$this->parseSource($source), $source, false];
         } catch (Error $error) {
-            $retry = $source . ';';
+            $retry = $source . self::TERMINATOR;
 
             try {
                 return [$this->parseSource($retry), $retry, true];
@@ -120,9 +135,12 @@ final readonly class StatementSplitter
     }
 
     /**
+     * The comment trailing a statement on the same physical line as its last
+     * token. A comment on its own line attaches to nothing.
+     *
      * @param list<Token> $tokens
      */
-    private function trailingComment(array $tokens, int $endTokenPos, int $endLine): ?string
+    private function trailingCommentToken(array $tokens, int $endTokenPos, int $endLine): ?Token
     {
         $count = \count($tokens);
 
@@ -137,14 +155,37 @@ final readonly class StatementSplitter
                 continue;
             }
 
-            if ($token->is(\T_COMMENT)) {
-                return trim((string) preg_replace('~^//|^#|^/\*|\*/$~', '', $token->text));
-            }
-
-            return null;
+            return $token->is(\T_COMMENT) ? $token : null;
         }
 
         return null;
+    }
+
+    /**
+     * The comment before the synthetic terminator: when a block ends in a
+     * bare expression, its marker sits *before* the `;` this class added, so
+     * the forward scan would look past it.
+     *
+     * @param list<Token> $tokens
+     */
+    private function commentBefore(array $tokens, int $endTokenPos): ?Token
+    {
+        for ($i = $endTokenPos - 1; $i >= 0; --$i) {
+            $token = $tokens[$i];
+
+            if ($token->is(\T_WHITESPACE)) {
+                continue;
+            }
+
+            return $token->is(\T_COMMENT) ? $token : null;
+        }
+
+        return null;
+    }
+
+    private function stripCommentSyntax(string $comment): string
+    {
+        return trim((string) preg_replace('~^//|^#|^/\*|\*/$~', '', $comment));
     }
 
     private function kindOf(Stmt $node): StatementKind
