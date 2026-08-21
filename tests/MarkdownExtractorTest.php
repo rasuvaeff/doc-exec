@@ -381,4 +381,31 @@ final class MarkdownExtractorTest
 
         Assert::same((new MarkdownExtractor())->extract($markdown, 'deep.md')[0]->scopeKey, '');
     }
+
+    #[DataProvider('lineEndingProvider')]
+    public function documentsAreReadTheSameWhateverTheirLineEndings(string $eol): void
+    {
+        $markdown = implode($eol, [
+            '## Heading',
+            '',
+            '```php doc-exec',
+            '$items = [',
+            '    1,',
+            '];',
+            '```',
+        ]);
+
+        $blocks = (new MarkdownExtractor())->extract($markdown, 'eol.md');
+
+        Assert::same(\count($blocks), 1);
+        Assert::same($blocks[0]->code, "\$items = [\n    1,\n];");
+        Assert::string($blocks[0]->scopeKey)->contains('Heading');
+    }
+
+    public static function lineEndingProvider(): iterable
+    {
+        yield 'unix' => ["\n"];
+        yield 'windows' => ["\r\n"];
+        yield 'classic mac' => ["\r"];
+    }
 }

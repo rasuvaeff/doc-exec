@@ -27,7 +27,8 @@ First release.
   failed, `2` a usage error.
 - Runs on Windows as well as POSIX systems: outcomes are reported through a
   temporary file rather than file descriptor 3, which Windows cannot expose
-  to a child process.
+  to a child process. Documents are read the same whether they are saved with
+  LF, CRLF or CR line endings.
 - Programmatic API: `DocExec::check()` returning `DocumentResult` →
   `BlockResult` → `StatementResult`, plus `StableId` for tracking a block
   across edits elsewhere in the document.
