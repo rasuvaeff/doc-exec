@@ -355,6 +355,60 @@ final class DocExecTest
         Assert::same($result->blocks[0]->processError, 'from stderr');
     }
 
+    public function theEqualsMarkerComparesStateNotIdentity(): void
+    {
+        // var_export() renders state, so two distinct objects with equal
+        // properties compare equal. This is the single most surprising
+        // semantic of the primary marker, and it is documented as such:
+        // `// =>` never asserts identity.
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            class DocExecPoint
+            {
+                public function __construct(public int $x) {}
+            }
+
+            new DocExecPoint(1); // => new DocExecPoint(1)
+            ```
+            MD);
+
+        Assert::true($result->passed());
+    }
+
+    public function theEqualsMarkerDistinguishesFloatsThatPrintTheSame(): void
+    {
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            0.1 + 0.2; // => 0.3
+            ```
+            MD);
+
+        Assert::false($result->passed());
+        Assert::string((string) $result->blocks[0]->statements[0]->message)->contains('expected');
+    }
+
+    public function theEqualsMarkerDistinguishesAStringFromTheNumberItLooksLike(): void
+    {
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            '5'; // => 5
+            ```
+            MD);
+
+        Assert::false($result->passed());
+    }
+
+    public function theEqualsMarkerSeparatesAnObjectFromAnArrayOfTheSameData(): void
+    {
+        $result = $this->check(<<<'MD'
+            ```php doc-exec
+            (object) ['x' => 1]; // => ['x' => 1]
+            ```
+            MD);
+
+        Assert::false($result->passed());
+    }
+
     public function whitespaceOnlyOnAStreamIsNotADiagnostic(): void
     {
         // Without trimming before the emptiness check, a stray newline on
