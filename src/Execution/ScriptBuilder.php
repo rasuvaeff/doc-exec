@@ -247,6 +247,6 @@ final readonly class ScriptBuilder
 
     private function literal(string $value): string
     {
-        return var_export($value, true);
+        return var_export($value, return: true);
     }
 }

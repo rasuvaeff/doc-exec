@@ -7,7 +7,7 @@ namespace Rasuvaeff\DocExec\Benchmarks;
 use Rasuvaeff\DocExec\Statement\StatementSplitter;
 use Testo\Bench;
 
-final class StatementSplitterBench
+final readonly class StatementSplitterBench
 {
     private const string SAMPLE = <<<'PHP'
         $items = [1, 2, 3, 4, 5];
@@ -18,6 +18,9 @@ final class StatementSplitterBench
         $sum; // => 30
         PHP;
 
+    /**
+     * @return list<\Rasuvaeff\DocExec\Statement\Statement>
+     */
     #[Bench(
         callables: [
             'naive_explode' => [self::class, 'naiveLineSplit'],

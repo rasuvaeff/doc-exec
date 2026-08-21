@@ -121,4 +121,87 @@ final class MarkdownExtractorTest
 
         Assert::same(\count($blocks), 1);
     }
+
+    public function aFenceIndentedInsideAListItemIsExtractedAndDedented(): void
+    {
+        $markdown = <<<'MD'
+            1. First install it, then:
+
+               ```php doc-exec
+               $a = 1;
+               $a + 1; // => 2
+               ```
+            MD;
+
+        $blocks = (new MarkdownExtractor())->extract($markdown, 'list.md');
+
+        Assert::same(\count($blocks), 1);
+        Assert::same($blocks[0]->code, "\$a = 1;\n\$a + 1; // => 2");
+    }
+
+    public function aSetextHeadingStartsAFreshScope(): void
+    {
+        $markdown = <<<'MD'
+            First
+            =====
+
+            ```php doc-exec
+            $a = 1;
+            ```
+
+            Second
+            ------
+
+            ```php doc-exec
+            $b = 2;
+            ```
+            MD;
+
+        $blocks = (new MarkdownExtractor())->extract($markdown, 'setext.md');
+
+        Assert::same(\count($blocks), 2);
+        Assert::true($blocks[0]->scopeKey !== $blocks[1]->scopeKey);
+    }
+
+    public function aFenceLeftOpenAtEndOfFileIsStillExtracted(): void
+    {
+        $markdown = "```php doc-exec
+\$a = 1;";
+
+        $blocks = (new MarkdownExtractor())->extract($markdown, 'unclosed.md');
+
+        Assert::same(\count($blocks), 1);
+        Assert::same($blocks[0]->code, '$a = 1;');
+    }
+
+    public function aBlockNestedInAWiderFenceIsNotExtracted(): void
+    {
+        // This is what lets a README document doc-exec's own syntax without
+        // the documentation example being executed as a test.
+        $markdown = <<<'MD'
+            ````markdown
+            ```php doc-exec
+            $never = 'executed';
+            ```
+            ````
+            MD;
+
+        Assert::same((new MarkdownExtractor())->extract($markdown, 'nested.md'), []);
+    }
+
+    public function anIndentedHeadingStillResetsTheScope(): void
+    {
+        $markdown = <<<'MD'
+              ## Indented heading
+
+            ```php doc-exec
+            $a = 1;
+            ```
+            MD;
+
+        $blocks = (new MarkdownExtractor())->extract($markdown, 'indented.md');
+
+        Assert::same(\count($blocks), 1);
+        Assert::string($blocks[0]->scopeKey)->contains('Indented heading');
+    }
 }

@@ -23,8 +23,8 @@ final class DocumentResultTest
     public function passedIsTrueWhenEveryBlockPassed(): void
     {
         $result = new DocumentResult(file: 'README.md', blocks: [
-            $this->block(0, true),
-            $this->block(1, true),
+            $this->block(0, passed: true),
+            $this->block(1, passed: true),
         ]);
 
         Assert::true($result->passed());
@@ -33,8 +33,8 @@ final class DocumentResultTest
     public function passedIsFalseWhenAnyBlockFailed(): void
     {
         $result = new DocumentResult(file: 'README.md', blocks: [
-            $this->block(0, true),
-            $this->block(1, false),
+            $this->block(0, passed: true),
+            $this->block(1, passed: false),
         ]);
 
         Assert::false($result->passed());
@@ -42,7 +42,7 @@ final class DocumentResultTest
 
     public function failedIdsIsEmptyWhenEverythingPassed(): void
     {
-        $result = new DocumentResult(file: 'README.md', blocks: [$this->block(0, true)]);
+        $result = new DocumentResult(file: 'README.md', blocks: [$this->block(0, passed: true)]);
 
         Assert::same($result->failedIds(), []);
     }
@@ -50,8 +50,8 @@ final class DocumentResultTest
     public function failedIdsListsOnlyTheFailingBlockIds(): void
     {
         $result = new DocumentResult(file: 'README.md', blocks: [
-            $this->block(0, true, 'ok-id'),
-            $this->block(1, false, 'bad-id'),
+            $this->block(0, passed: true, stableId: 'ok-id'),
+            $this->block(1, passed: false, stableId: 'bad-id'),
         ]);
 
         Assert::same($result->failedIds(), ['bad-id']);

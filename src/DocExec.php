@@ -288,6 +288,6 @@ final readonly class DocExec
 
     private function stringify(mixed $value): string
     {
-        return \is_string($value) ? $value : var_export($value, true);
+        return \is_string($value) ? $value : var_export($value, return: true);
     }
 }

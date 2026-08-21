@@ -16,61 +16,53 @@ foreach ($autoloadCandidates as $candidate) {
     }
 }
 
+use Rasuvaeff\DocExec\Cli\Arguments;
+use Rasuvaeff\DocExec\Cli\UsageError;
 use Rasuvaeff\DocExec\DocExec;
 use Rasuvaeff\DocExec\DocumentResult;
 use Rasuvaeff\DocExec\Report\ConsoleReporter;
 
-$arguments = $argv;
-array_shift($arguments);
+/** @var list<string> $argumentList */
+$argumentList = array_slice($argv ?? [], 1);
 
-$bootstrap = null;
-$files = [];
+try {
+    $arguments = Arguments::parse($argumentList, getcwd() ?: '.');
+} catch (UsageError $error) {
+    fwrite(\STDERR, 'doc-exec: ' . $error->getMessage() . "\n\n" . Arguments::usage() . "\n");
 
-foreach ($arguments as $argument) {
-    if (str_starts_with($argument, '--bootstrap=')) {
-        $bootstrap = substr($argument, \strlen('--bootstrap='));
-
-        continue;
-    }
-
-    $files[] = $argument;
+    exit(2);
 }
 
-if ($files === []) {
-    $default = getcwd() . '/README.md';
+if ($arguments->wantsHelp) {
+    echo Arguments::usage(), "\n";
 
-    if (!is_file($default)) {
-        fwrite(\STDERR, 'doc-exec: no README.md found in ' . getcwd() . " and no files given\n");
-        exit(2);
-    }
-
-    $files = [$default];
+    exit(0);
 }
 
-$docExec = new DocExec(bootstrap: $bootstrap);
+$docExec = new DocExec(bootstrap: $arguments->bootstrap, timeoutSeconds: $arguments->timeoutSeconds);
 $reporter = new ConsoleReporter();
 
 /** @var list<DocumentResult> $results */
 $results = [];
 $hadError = false;
 
-foreach ($files as $file) {
+foreach ($arguments->files as $file) {
     try {
         $results[] = $docExec->check($file);
-    } catch (\Throwable $exception) {
+    } catch (Throwable $exception) {
         fwrite(\STDERR, 'doc-exec: ' . $exception->getMessage() . "\n");
         $hadError = true;
     }
 }
 
 if ($results !== []) {
-    echo $reporter->render($results) . "\n";
+    echo $reporter->render($results), "\n";
 }
 
 $allPassed = array_reduce(
     $results,
-    static fn (bool $carry, DocumentResult $result): bool => $carry && $result->passed(),
-    true,
+    static fn(bool $carry, DocumentResult $result): bool => $carry && $result->passed(),
+    initial: true,
 );
 
 exit($hadError || !$allPassed ? 1 : 0);

@@ -313,9 +313,9 @@ final class DocExecTest
     #[Property(runs: 150)]
     public function docExecFindsExactlyTheStaleBlocks(array $include): void
     {
-        $catalog = self::staleCatalog();
+        $catalog = $this->staleCatalog();
 
-        if (!\in_array(true, $include, true)) {
+        if (!\in_array(needle: true, haystack: $include, strict: true)) {
             $include[0] = true;
         }
 
@@ -324,7 +324,7 @@ final class DocExecTest
         $expectedFailOrdinals = [];
 
         foreach ($catalog as $i => $entry) {
-            if ($include[$i] !== true) {
+            if (!$include[$i]) {
                 continue;
             }
 
@@ -390,7 +390,7 @@ final class DocExecTest
     /**
      * @return list<array{code: string, fail: bool}>
      */
-    private static function staleCatalog(): array
+    private function staleCatalog(): array
     {
         return [
             ['code' => '1 + 1; // => 2', 'fail' => false],
