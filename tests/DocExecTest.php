@@ -8,6 +8,7 @@ use Rasuvaeff\DocExec\DocExec;
 use Rasuvaeff\DocExec\StableId;
 use Rasuvaeff\DocExec\StatementOutcome;
 use Rasuvaeff\PropertyTesting\ArbitraryInterface;
+use Rasuvaeff\PropertyTesting\Classify;
 use Rasuvaeff\PropertyTesting\Gen;
 use Rasuvaeff\PropertyTesting\Property;
 use Testo\Assert;
@@ -20,6 +21,8 @@ use Testo\Test;
 #[Covers(DocExec::class)]
 final class DocExecTest
 {
+    private const int CATALOG_SIZE = 20;
+
     private string $bootstrap;
     /** @var list<string> */
     private array $tempFiles = [];
@@ -310,24 +313,28 @@ final class DocExecTest
      *
      * @param list<bool> $include
      */
-    #[Property(runs: 150)]
-    public function docExecFindsExactlyTheStaleBlocks(array $include): void
+    #[Property(runs: 120, timeoutMs: 20_000)]
+    public function docExecFindsExactlyTheStaleBlocks(array $include, bool $healthyOnly): void
     {
         $catalog = $this->staleCatalog();
+        $selected = [];
 
-        if (!\in_array(needle: true, haystack: $include, strict: true)) {
-            $include[0] = true;
+        foreach ($catalog as $index => $entry) {
+            if ($include[$index] && !($healthyOnly && $entry['fail'])) {
+                $selected[] = $index;
+            }
+        }
+
+        if ($selected === []) {
+            $selected = [0];
         }
 
         $markdown = '';
         $codes = [];
         $expectedFailOrdinals = [];
 
-        foreach ($catalog as $i => $entry) {
-            if (!$include[$i]) {
-                continue;
-            }
-
+        foreach ($selected as $index) {
+            $entry = $catalog[$index];
             $codes[] = $entry['code'];
 
             if ($entry['fail']) {
@@ -352,6 +359,22 @@ final class DocExecTest
         $actualIds = $result->failedIds();
         sort($actualIds);
 
+        // Each of these is a distinct path through DocExec: a fully green
+        // document, a stale block, a skipped statement, a marker rejected
+        // before it can become broken generated code, and a block that does
+        // not parse. Without the gate the random phase could quietly stop
+        // reaching one of them and still report success.
+        Classify::cover($expectedIds === [], 'all blocks green', 10.0);
+        Classify::cover($expectedIds !== [], 'at least one stale block', 20.0);
+        Classify::cover(\in_array(15, $selected, true), 'a skipped statement', 15.0);
+        Classify::cover(
+            \in_array(16, $selected, true) || \in_array(17, $selected, true),
+            'an invalid marker',
+            15.0,
+        );
+        Classify::cover(\in_array(18, $selected, true), 'a block that does not parse', 15.0);
+        Classify::when(\count($expectedIds) > 3, 'many stale blocks');
+
         Assert::same($actualIds, $expectedIds);
     }
 
@@ -360,34 +383,69 @@ final class DocExecTest
      */
     public static function docExecFindsExactlyTheStaleBlocksGenerators(): array
     {
+        $switches = array_fill(0, self::CATALOG_SIZE, Gen::bool());
+
         return [
-            'include' => Gen::tuple(
-                Gen::bool(),
-                Gen::bool(),
-                Gen::bool(),
-                Gen::bool(),
-                Gen::bool(),
-                Gen::bool(),
-                Gen::bool(),
-                Gen::bool(),
-            ),
+            'include' => Gen::tuple(...$switches),
+            // Without a deliberate all-green mode, twenty coin flips almost
+            // never produce a document with no stale block at all, and the
+            // "everything passes" path stops being exercised.
+            'healthyOnly' => Gen::frequency([[3, Gen::elements([true])], [7, Gen::elements([false])]]),
         ];
     }
 
     /**
-     * Locks in one deterministic pass/fail pair per marker type, found by
-     * hand while designing the catalog — run before the random phase.
+     * Deterministic subsets run before the random phase: the whole catalog,
+     * each half of it, and the specific combinations that used to be broken
+     * — a block-scoped parse error next to a healthy block (it must not take
+     * its neighbour down), and every brace-bearing construct at once.
      *
-     * @return iterable<string, array{list<bool>}>
+     * @return iterable<string, array{list<bool>, bool}>
      */
     public static function docExecFindsExactlyTheStaleBlocksExamples(): iterable
     {
-        yield 'every block included' => [[true, true, true, true, true, true, true, true]];
-        yield 'only the healthy blocks' => [[true, false, true, false, true, false, true, false]];
-        yield 'only the stale blocks' => [[false, true, false, true, false, true, false, true]];
+        $all = array_fill(0, self::CATALOG_SIZE, true);
+        $none = array_fill(0, self::CATALOG_SIZE, false);
+
+        yield 'every block included' => [$all, false];
+
+        $healthy = $none;
+        $stale = $none;
+
+        foreach ([0, 2, 4, 6, 8, 10, 11, 12, 14, 15, 19] as $index) {
+            $healthy[$index] = true;
+        }
+
+        foreach ([1, 3, 5, 7, 9, 13, 16, 17, 18] as $index) {
+            $stale[$index] = true;
+        }
+
+        yield 'only the healthy blocks' => [$healthy, false];
+        yield 'healthy-only mode over the whole catalog' => [$all, true];
+        yield 'only the stale blocks' => [$stale, false];
+
+        $parseErrorBesideHealthy = $none;
+        $parseErrorBesideHealthy[0] = true;
+        $parseErrorBesideHealthy[18] = true;
+
+        yield 'a parse error next to a healthy block' => [$parseErrorBesideHealthy, false];
+
+        $braceConstructs = $none;
+
+        foreach ([8, 10, 11, 12, 14] as $index) {
+            $braceConstructs[$index] = true;
+        }
+
+        yield 'every brace-bearing construct' => [$braceConstructs, false];
     }
 
     /**
+     * Every entry is one block: its code and whether doc-exec must report it
+     * as failed. The constructs that the old brace-splitting could not run —
+     * closures, if/else, try/catch, match, anonymous classes, do/while — are
+     * deliberately in here, so a regression to that behaviour shows up as a
+     * property counterexample rather than as a silently narrower corpus.
+     *
      * @return list<array{code: string, fail: bool}>
      */
     private function staleCatalog(): array
@@ -401,6 +459,18 @@ final class DocExecTest
             ['code' => 'echo "hi"; // outputs bye', 'fail' => true],
             ['code' => '$x = 1;', 'fail' => false],
             ['code' => 'throw new \RuntimeException("boom");', 'fail' => true],
+            ['code' => "\$double = function (int \$n): int {\n    return \$n * 2;\n};\n\$double(4); // => 8", 'fail' => false],
+            ['code' => "\$double = function (int \$n): int {\n    return \$n * 2;\n};\n\$double(4); // => 9", 'fail' => true],
+            ['code' => "if (1 > 0) {\n    \$label = 'yes';\n} else {\n    \$label = 'no';\n}\n\$label; // => 'yes'", 'fail' => false],
+            ['code' => "try {\n    throw new \RuntimeException('x');\n} catch (\RuntimeException \$e) {\n    \$seen = true;\n}\n\$seen; // => true", 'fail' => false],
+            ['code' => "\$v = match (true) {\n    default => 3,\n};\n\$v; // => 3", 'fail' => false],
+            ['code' => "\$o = new class {\n    public int \$n = 7;\n};\n\$o->n; // => 8", 'fail' => true],
+            ['code' => "\$n = 3;\ndo {\n    --\$n;\n} while (\$n > 0);\n\$n; // => 0", 'fail' => false],
+            ['code' => 'throw new \RuntimeException("never"); // skip: illustrative only', 'fail' => false],
+            ['code' => '1 + 1; // =>', 'fail' => true],
+            ['code' => 'echo "x"; // => 5', 'fail' => true],
+            ['code' => '$broken = ;', 'fail' => true],
+            ['code' => '// nothing runnable at all', 'fail' => false],
         ];
     }
 
