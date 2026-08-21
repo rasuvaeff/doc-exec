@@ -27,7 +27,7 @@ final class ProcessRunnerTest
         Assert::false($outcome->timedOut);
     }
 
-    public function readsResultRowsFromTheDedicatedDescriptor(): void
+    public function readsResultRowsFromTheResultsFile(): void
     {
         $outcome = (new ProcessRunner(timeoutSeconds: 5))->run($this->scriptReporting("[['status' => 'pass'], ['status' => 'skip']]"));
 
@@ -40,9 +40,14 @@ final class ProcessRunnerTest
             "<?php\nfile_put_contents(\$argv[1], json_encode([['status' => 'pass', 'note' => \$argv[1]]]));\n",
         );
 
+        $path = (string) ($outcome->results[0]['note'] ?? '');
+
         Assert::same(\count((array) $outcome->results), 1);
-        Assert::true(is_writable(\dirname((string) ($outcome->results[0]['note'] ?? '/nowhere'))));
-        Assert::string((string) ($outcome->results[0]['note'] ?? ''))->contains('doc-exec-');
+        // Not a check on the file's name: Windows' tempnam() keeps only the
+        // first three characters of a prefix, so asserting on "doc-exec-"
+        // would fail there for a path that is perfectly correct.
+        Assert::same(\dirname($path), realpath(sys_get_temp_dir()));
+        Assert::true(is_writable(\dirname($path)));
     }
 
     public function keepsResultsSeparateFromWhatTheDocumentPrints(): void
