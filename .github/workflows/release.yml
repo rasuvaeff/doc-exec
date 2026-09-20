@@ -28,34 +28,64 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
 
-      - name: Setup PHP
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
-        with:
-          php-version: '8.4'
-          coverage: none
-          extensions: json, mbstring, tokenizer
-          tools: composer:v2
-
-      - name: Install dependencies
-        run: composer install --no-interaction --no-progress --prefer-dist
-
-      # A tag is what Packagist publishes, so the gate runs here too rather
-      # than trusting that whoever tagged had run it.
-      #
-      # `composer build` and `rector`, not `release-check`: the third part of
-      # that script is bc-check, and on a tag there is nothing to compare
-      # against — the newest tag is this one. Backward compatibility is
-      # checked on the pull request, against the previous tag, which is where
-      # the answer is meaningful. Running it here also walks straight into
-      # roave's SKIPPED-as-failure behaviour: an enum case used as a default
-      # in a promoted property (`Statement::$kind`) is reported as an
-      # unsupported expression and exits 3, failing a release for source that
-      # is perfectly compatible.
-      - name: Verify the tagged commit
+      # Packagist publishes on the tag itself, so by the time this job runs the
+      # package is already out — blocking the GitHub Release cannot unpublish
+      # it, and re-running the whole test suite here would only look like a
+      # gate. What is still worth enforcing is the release rule the process
+      # actually depends on: the tag names a commit that reached master through
+      # a pull request, with its build green.
+      - name: Verify the tag points at validated master history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
         run: |
-          composer build
-          composer rector
+          if ! git merge-base --is-ancestor "$SHA" origin/master; then
+            echo "::error::$TAG points at $SHA, which is not an ancestor of master." \
+              "Tag a commit that was merged through a pull request."
+            exit 1
+          fi
+
+          # The tag is pushed seconds after the merge, while master's own build
+          # is still queued or running. A `conclusion` of null means "not
+          # settled yet" and an empty list means "not dispatched yet" — neither
+          # is a verdict, and judging them as one failed every release tagged
+          # promptly (`matrix conclusion: ` — an empty string, because
+          # `join(",")` over nulls yields nothing). Both are waited on instead.
+          deadline=$(( SECONDS + 900 ))
+
+          while :; do
+            states=$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
+              --jq '[.check_runs[] | select(.name | startswith("PHP ")) | .conclusion // "pending"]')
+
+            found=$(printf '%s' "$states" | jq 'length')
+            pending=$(printf '%s' "$states" | jq '[.[] | select(. == "pending")] | length')
+
+            if [ "$found" -gt 0 ] && [ "$pending" -eq 0 ]; then
+              break
+            fi
+
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::$SHA has no settled matrix build after 15 minutes" \
+                "($found found, $pending still running). Re-run this workflow once the build" \
+                "on master has finished; the tag does not need to move."
+              exit 1
+            fi
+
+            echo "Waiting for the matrix build on $SHA ($found found, $pending still running)…"
+            sleep 20
+          done
+
+          verdicts=$(printf '%s' "$states" | jq -r '[.[] | select(. != "success")] | unique | join(",")')
+
+          if [ -n "$verdicts" ]; then
+            echo "::error::$SHA has no successful build (matrix conclusions: $verdicts)." \
+              "A release must not be published for a commit whose CI did not pass."
+            exit 1
+          fi
 
       - name: Extract the changelog section for this tag
         env:
