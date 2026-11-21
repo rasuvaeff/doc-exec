@@ -17,7 +17,7 @@ examples that quietly stop matching the code they document — the way
 
 ## Requirements
 
-- PHP 8.3+
+- PHP 8.3 – 8.6
 - `ext-tokenizer`
 - `nikic/php-parser` ^5.7 (a code block is split into statements by a real PHP
   parser, so every construct the language allows stays intact)

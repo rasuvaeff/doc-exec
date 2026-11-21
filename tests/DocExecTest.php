@@ -30,7 +30,7 @@ final class DocExecTest
     #[BeforeTest]
     public function setUp(): void
     {
-        $this->bootstrap = \dirname(__DIR__) . '/vendor/autoload.php';
+        $this->bootstrap = __DIR__ . '/../vendor/autoload.php';
     }
 
     #[AfterTest]

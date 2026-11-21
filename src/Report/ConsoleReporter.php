@@ -14,7 +14,14 @@ use Rasuvaeff\DocExec\StatementOutcome;
 final readonly class ConsoleReporter
 {
     /**
+     * Returns terminal text: document content, statement output and error
+     * messages (taint sources for psalm 7) are printed verbatim on purpose —
+     * this is a console report, not HTML output.
+     *
      * @param list<DocumentResult> $results
+     *
+     * @psalm-taint-escape html
+     * @psalm-taint-escape has_quotes
      */
     public function render(array $results): string
     {
