@@ -164,7 +164,7 @@ final class ProcessRunnerTest
     {
         $source = "<?php\nfile_put_contents(\$argv[1], json_encode([['status' => 'pass', 'note' => \$argv[0] . '|' . \$argv[1]]]));\n";
 
-        $note = (string) ((new ProcessRunner(timeoutSeconds: 5))->run($source)->results[0]['note'] ?? '');
+        $note = (new ProcessRunner(timeoutSeconds: 5))->run($source)->results[0]['note'] ?? '';
 
         return $note === '' ? [] : explode('|', $note);
     }

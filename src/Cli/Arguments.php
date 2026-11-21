@@ -82,8 +82,14 @@ final readonly class Arguments
     }
 
     /**
+     * The path comes from `$argv`, which psalm 7 treats as a taint source; the
+     * checks below guarantee it names an existing local file the user asked
+     * for by name, so no input taint crosses this validation boundary.
+     *
      * @return non-empty-string
      * @throws UsageError
+     *
+     * @psalm-taint-escape input
      */
     private static function readableFile(string $path, string $what): string
     {
